@@ -62,9 +62,42 @@ jobs:
       run: |
         cat << 'EOF' > Dockerfile.minio
         FROM minio/minio:latest
-        COPY sample_data /data/sample_data
+        
+        # Install MinIO client for bucket management
+        RUN curl -O https://dl.min.io/client/mc/release/linux-amd64/mc && \
+            chmod +x mc && \
+            mv mc /usr/local/bin/
+        
+        # Copy sample data
+        COPY sample_data /tmp/sample_data
+        
+        # Create startup script to initialize bucket and upload data
+        RUN cat << 'SCRIPT' > /usr/local/bin/init-minio.sh
+        #!/bin/bash
+        # Start MinIO in background
+        minio server /data --console-address ":9001" &
+        MINIO_PID=$!
+        
+        # Wait for MinIO to start
+        sleep 10
+        
+        # Configure MinIO client
+        mc alias set local http://localhost:9000 minioadmin minioadmin123
+        
+        # Create bucket
+        mc mb local/delta-sharing-data || true
+        
+        # Upload sample data to bucket
+        mc cp /tmp/sample_data/*.csv local/delta-sharing-data/sample_data/
+        
+        # Wait for MinIO process
+        wait $MINIO_PID
+        SCRIPT
+        
+        RUN chmod +x /usr/local/bin/init-minio.sh
+        
         EXPOSE 9000 9001
-        CMD ["server", "/data", "--console-address", ":9001"]
+        CMD ["/usr/local/bin/init-minio.sh"]
         EOF
         docker build -f Dockerfile.minio -t ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }} .
         docker push ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }}
@@ -109,6 +142,10 @@ jobs:
           --os-type Linux \
           --environment-variables \
             DELTA_SHARING_BEARER_TOKEN="${{ env.BEARER_TOKEN }}" \
+            MINIO_ENDPOINT="${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9000" \
+            MINIO_ROOT_USER=minioadmin \
+            MINIO_ROOT_PASSWORD=minioadmin123 \
+            MINIO_BUCKET_NAME=delta-sharing-data \
           --cpu 1 \
           --memory 2
 

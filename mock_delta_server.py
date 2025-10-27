@@ -4,15 +4,33 @@ Mock Delta Sharing server for testing purposes.
 This implements the basic Delta Sharing REST API endpoints.
 """
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from minio import Minio
+from minio.error import S3Error
+import urllib3
 
 app = Flask(__name__)
 
 # Bearer token for authentication
 BEARER_TOKEN = os.getenv('DELTA_SHARING_BEARER_TOKEN', 'your-secure-bearer-token-here')
+
+# MinIO configuration
+MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'fairgrounds-deltashare-development-minio.eastus.azurecontainer.io:9000')
+MINIO_ACCESS_KEY = os.getenv('MINIO_ROOT_USER', 'minioadmin')
+MINIO_SECRET_KEY = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin123')
+MINIO_BUCKET = os.getenv('MINIO_BUCKET_NAME', 'delta-sharing-data')
+
+# Initialize MinIO client
+def get_minio_client():
+    return Minio(
+        MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=False  # HTTP for development
+    )
 
 def verify_auth():
     """Verify bearer token authentication"""
@@ -125,20 +143,19 @@ def get_table_metadata(share_name, schema_name, table_name):
         }
     })
 
-@app.route('/files/<table_name>.csv')
-def serve_csv_file(table_name):
-    """Serve CSV files - simulates signed URL access"""
-    if not verify_auth():
-        return jsonify({"error": "Unauthorized"}), 401
-    
-    if table_name not in ["customers", "orders", "products"]:
-        return jsonify({"error": "File not found"}), 404
-    
-    file_path = f"/data/{table_name}.csv"
-    if os.path.exists(file_path):
-        return send_file(file_path, mimetype='text/csv', as_attachment=False)
-    else:
-        return jsonify({"error": "File not found"}), 404
+def generate_presigned_url(object_name, expiry_hours=1):
+    """Generate presigned URL for MinIO object"""
+    try:
+        minio_client = get_minio_client()
+        url = minio_client.presigned_get_object(
+            MINIO_BUCKET,
+            object_name,
+            expires=timedelta(hours=expiry_hours)
+        )
+        return url
+    except S3Error as e:
+        print(f"Error generating presigned URL: {e}")
+        return None
 
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/query', methods=['POST'])
 def query_table(share_name, schema_name, table_name):
@@ -149,17 +166,21 @@ def query_table(share_name, schema_name, table_name):
     if table_name not in ["customers", "orders", "products"]:
         return jsonify({"error": "Table not found"}), 404
     
-    # Get server URL from request
-    server_url = request.host_url.rstrip('/')
+    # Generate presigned URL for MinIO object
+    object_name = f"sample_data/{table_name}.csv"
+    presigned_url = generate_presigned_url(object_name)
     
-    # Return accessible HTTP URL instead of file:// path
+    if not presigned_url:
+        return jsonify({"error": "Unable to generate file access URL"}), 500
+    
+    # Return MinIO presigned URL for direct data access
     return jsonify({
         "protocol": {
             "minReaderVersion": 1
         },
         "files": [
             {
-                "url": f"{server_url}/files/{table_name}.csv",
+                "url": presigned_url,
                 "id": f"mock-file-{table_name}",
                 "partitionValues": {},
                 "size": 1024,

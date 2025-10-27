@@ -9,8 +9,8 @@ WORKDIR /app
 # Copy the mock server
 COPY mock_delta_server.py .
 
-# Install Flask
-RUN pip install flask
+# Install Flask and MinIO client
+RUN pip install flask minio
 
 # Create directories for config and data
 RUN mkdir -p /config /data
