@@ -63,6 +63,8 @@ jobs:
         cat << 'EOF' > Dockerfile.minio
         FROM minio/minio:latest
         COPY sample_data /data/sample_data
+        EXPOSE 9000 9001
+        CMD ["server", "/data", "--console-address", ":9001"]
         EOF
         docker build -f Dockerfile.minio -t ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }} .
         docker push ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }}
@@ -90,7 +92,6 @@ jobs:
           --environment-variables \
             MINIO_ROOT_USER=minioadmin \
             MINIO_ROOT_PASSWORD=minioadmin123 \
-          --command-line "server /data --console-address :9001" \
           --cpu 1 \
           --memory 2
 
