@@ -58,21 +58,9 @@ jobs:
         docker build -t ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }} .
         docker push ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
 
-    - name: Build and push MinIO image with data
+    - name: Create MinIO initialization script
       run: |
-        cat << 'EOF' > Dockerfile.minio
-        FROM minio/minio:latest
-        
-        # Install MinIO client for bucket management
-        RUN curl -O https://dl.min.io/client/mc/release/linux-amd64/mc && \
-            chmod +x mc && \
-            mv mc /usr/local/bin/
-        
-        # Copy sample data
-        COPY sample_data /tmp/sample_data
-        
-        # Create startup script to initialize bucket and upload data
-        RUN cat << 'SCRIPT' > /usr/local/bin/init-minio.sh
+        cat << 'EOF' > init-minio.sh
         #!/bin/bash
         # Start MinIO in background
         minio server /data --console-address ":9001" &
@@ -92,8 +80,22 @@ jobs:
         
         # Wait for MinIO process
         wait $MINIO_PID
-        SCRIPT
+        EOF
+        chmod +x init-minio.sh
+
+    - name: Build and push MinIO image with data
+      run: |
+        cat << 'EOF' > Dockerfile.minio
+        FROM minio/minio:latest
         
+        # Install MinIO client for bucket management
+        RUN curl -O https://dl.min.io/client/mc/release/linux-amd64/mc && \
+            chmod +x mc && \
+            mv mc /usr/local/bin/
+        
+        # Copy sample data and initialization script
+        COPY sample_data /tmp/sample_data
+        COPY init-minio.sh /usr/local/bin/init-minio.sh
         RUN chmod +x /usr/local/bin/init-minio.sh
         
         EXPOSE 9000 9001
