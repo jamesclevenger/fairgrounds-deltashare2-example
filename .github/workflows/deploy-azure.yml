@@ -86,6 +86,7 @@ jobs:
           --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \
           --dns-name-label ${{ env.CONTAINER_GROUP_NAME }}-minio \
           --ports 9000 9001 \
+          --os-type Linux \
           --environment-variables \
             MINIO_ROOT_USER=minioadmin \
             MINIO_ROOT_PASSWORD=minioadmin123 \
@@ -104,6 +105,7 @@ jobs:
           --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \
           --dns-name-label ${{ env.CONTAINER_GROUP_NAME }}-deltashare \
           --ports 8080 \
+          --os-type Linux \
           --environment-variables \
             DELTA_SHARING_BEARER_TOKEN="${{ env.BEARER_TOKEN }}" \
           --cpu 1 \
