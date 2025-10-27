@@ -6,8 +6,9 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 # Create app directory
 WORKDIR /app
 
-# Copy the mock server
+# Copy the mock server and sample data
 COPY mock_delta_server.py .
+COPY sample_data/*.csv /data/
 
 # Install Flask and MinIO client
 RUN pip install flask minio

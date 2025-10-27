@@ -58,51 +58,16 @@ jobs:
         docker build -t ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }} .
         docker push ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
 
-    - name: Create MinIO initialization script
-      run: |
-        cat << 'EOF' > init-minio.sh
-        #!/bin/bash
-        # Start MinIO in background
-        minio server /data --console-address ":9001" &
-        MINIO_PID=$!
-        
-        # Wait for MinIO to start
-        sleep 10
-        
-        # Configure MinIO client
-        mc alias set local http://localhost:9000 minioadmin minioadmin123
-        
-        # Create bucket
-        mc mb local/delta-sharing-data || true
-        
-        # Upload sample data to bucket
-        mc cp /tmp/sample_data/*.csv local/delta-sharing-data/sample_data/
-        
-        # Wait for MinIO process
-        wait $MINIO_PID
-        EOF
-        chmod +x init-minio.sh
-
-    - name: Build and push MinIO image with data
+    - name: Build and push simple MinIO image
       run: |
         cat << 'EOF' > Dockerfile.minio
         FROM minio/minio:latest
-        
-        # Install MinIO client for bucket management
-        RUN curl -O https://dl.min.io/client/mc/release/linux-amd64/mc && \
-            chmod +x mc && \
-            mv mc /usr/local/bin/
-        
-        # Copy sample data and initialization script
-        COPY sample_data /tmp/sample_data
-        COPY init-minio.sh /usr/local/bin/init-minio.sh
-        RUN chmod +x /usr/local/bin/init-minio.sh
-        
+        # Just use standard MinIO - we'll create bucket via API calls
         EXPOSE 9000 9001
-        CMD ["/usr/local/bin/init-minio.sh"]
+        CMD ["server", "/data", "--console-address", ":9001"]
         EOF
-        docker build -f Dockerfile.minio -t ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }} .
-        docker push ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }}
+        docker build -f Dockerfile.minio -t ${{ env.ACR_NAME }}.azurecr.io/minio-simple:${{ github.sha }} .
+        docker push ${{ env.ACR_NAME }}.azurecr.io/minio-simple:${{ github.sha }}
 
     - name: Set bearer token
       run: |
@@ -117,7 +82,7 @@ jobs:
         az container create \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
           --name ${{ env.CONTAINER_GROUP_NAME }}-minio \
-          --image ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }} \
+          --image ${{ env.ACR_NAME }}.azurecr.io/minio-simple:${{ github.sha }} \
           --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
           --registry-username ${{ env.ACR_NAME }} \
           --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \

@@ -150,6 +150,50 @@ def get_table_metadata(share_name, schema_name, table_name):
         }
     })
 
+def initialize_minio():
+    """Initialize MinIO bucket and upload sample data"""
+    try:
+        print(f"Initializing MinIO at {MINIO_ENDPOINT}")
+        minio_client = get_minio_client()
+        
+        # Create bucket if it doesn't exist
+        if not minio_client.bucket_exists(MINIO_BUCKET):
+            print(f"Creating bucket {MINIO_BUCKET}")
+            minio_client.make_bucket(MINIO_BUCKET)
+        else:
+            print(f"Bucket {MINIO_BUCKET} already exists")
+        
+        # Upload sample data files
+        sample_files = ['customers.csv', 'orders.csv', 'products.csv']
+        for filename in sample_files:
+            local_path = f'/data/{filename}'
+            object_name = f'sample_data/{filename}'
+            
+            if os.path.exists(local_path):
+                try:
+                    # Check if object already exists
+                    minio_client.stat_object(MINIO_BUCKET, object_name)
+                    print(f"Object {object_name} already exists")
+                except S3Error as e:
+                    if e.code == 'NoSuchKey':
+                        # Upload the file
+                        print(f"Uploading {local_path} to {object_name}")
+                        minio_client.fput_object(MINIO_BUCKET, object_name, local_path)
+                        print(f"Successfully uploaded {object_name}")
+                    else:
+                        raise
+            else:
+                print(f"Warning: Local file {local_path} not found")
+        
+        print("MinIO initialization completed successfully")
+        return True
+        
+    except Exception as e:
+        print(f"Error initializing MinIO: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def generate_presigned_url(object_name, expiry_hours=1):
     """Generate presigned URL for MinIO object"""
     try:
@@ -158,8 +202,9 @@ def generate_presigned_url(object_name, expiry_hours=1):
         
         # Check if bucket exists
         if not minio_client.bucket_exists(MINIO_BUCKET):
-            print(f"Error: Bucket {MINIO_BUCKET} does not exist")
-            return None
+            print(f"Bucket {MINIO_BUCKET} does not exist, attempting to initialize...")
+            if not initialize_minio():
+                return None
         
         # Check if object exists
         try:
@@ -167,8 +212,15 @@ def generate_presigned_url(object_name, expiry_hours=1):
             print(f"Object {object_name} found in bucket {MINIO_BUCKET}")
         except S3Error as e:
             if e.code == 'NoSuchKey':
-                print(f"Error: Object {object_name} not found in bucket {MINIO_BUCKET}")
-                return None
+                print(f"Object {object_name} not found, attempting to initialize...")
+                if not initialize_minio():
+                    return None
+                # Try again after initialization
+                try:
+                    minio_client.stat_object(MINIO_BUCKET, object_name)
+                except S3Error:
+                    print(f"Error: Object {object_name} still not found after initialization")
+                    return None
             else:
                 raise
         
