@@ -4,7 +4,7 @@ Mock Delta Sharing server for testing purposes.
 This implements the basic Delta Sharing REST API endpoints.
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import os
 import json
 from datetime import datetime
@@ -125,6 +125,21 @@ def get_table_metadata(share_name, schema_name, table_name):
         }
     })
 
+@app.route('/files/<table_name>.csv')
+def serve_csv_file(table_name):
+    """Serve CSV files - simulates signed URL access"""
+    if not verify_auth():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    if table_name not in ["customers", "orders", "products"]:
+        return jsonify({"error": "File not found"}), 404
+    
+    file_path = f"/data/{table_name}.csv"
+    if os.path.exists(file_path):
+        return send_file(file_path, mimetype='text/csv', as_attachment=False)
+    else:
+        return jsonify({"error": "File not found"}), 404
+
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/query', methods=['POST'])
 def query_table(share_name, schema_name, table_name):
     """Query table data"""
@@ -134,14 +149,17 @@ def query_table(share_name, schema_name, table_name):
     if table_name not in ["customers", "orders", "products"]:
         return jsonify({"error": "Table not found"}), 404
     
-    # Mock file response - in real Delta Sharing this would return signed URLs to Parquet files
+    # Get server URL from request
+    server_url = request.host_url.rstrip('/')
+    
+    # Return accessible HTTP URL instead of file:// path
     return jsonify({
         "protocol": {
             "minReaderVersion": 1
         },
         "files": [
             {
-                "url": f"file:///data/{table_name}.csv",
+                "url": f"{server_url}/files/{table_name}.csv",
                 "id": f"mock-file-{table_name}",
                 "partitionValues": {},
                 "size": 1024,
