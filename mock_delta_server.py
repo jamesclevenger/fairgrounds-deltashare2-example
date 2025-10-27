@@ -25,11 +25,18 @@ MINIO_BUCKET = os.getenv('MINIO_BUCKET_NAME', 'delta-sharing-data')
 
 # Initialize MinIO client
 def get_minio_client():
+    # Disable SSL warnings for HTTP connections
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
     return Minio(
         MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
-        secure=False  # HTTP for development
+        secure=False,  # HTTP for development
+        http_client=urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=5, read=10),
+            retries=urllib3.Retry(total=3, backoff_factor=0.3)
+        )
     )
 
 def verify_auth():
@@ -146,15 +153,38 @@ def get_table_metadata(share_name, schema_name, table_name):
 def generate_presigned_url(object_name, expiry_hours=1):
     """Generate presigned URL for MinIO object"""
     try:
+        print(f"Connecting to MinIO at {MINIO_ENDPOINT} for object {object_name}")
         minio_client = get_minio_client()
+        
+        # Check if bucket exists
+        if not minio_client.bucket_exists(MINIO_BUCKET):
+            print(f"Error: Bucket {MINIO_BUCKET} does not exist")
+            return None
+        
+        # Check if object exists
+        try:
+            minio_client.stat_object(MINIO_BUCKET, object_name)
+            print(f"Object {object_name} found in bucket {MINIO_BUCKET}")
+        except S3Error as e:
+            if e.code == 'NoSuchKey':
+                print(f"Error: Object {object_name} not found in bucket {MINIO_BUCKET}")
+                return None
+            else:
+                raise
+        
+        # Generate presigned URL
         url = minio_client.presigned_get_object(
             MINIO_BUCKET,
             object_name,
             expires=timedelta(hours=expiry_hours)
         )
+        print(f"Generated presigned URL: {url[:100]}...")
         return url
-    except S3Error as e:
-        print(f"Error generating presigned URL: {e}")
+        
+    except Exception as e:
+        print(f"Error generating presigned URL: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/query', methods=['POST'])
