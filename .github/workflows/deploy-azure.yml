@@ -1,0 +1,147 @@
+name: Deploy to Azure Container Instances
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - production
+      bearer_token:
+        description: 'Delta Sharing Bearer Token (optional - uses secret if not provided)'
+        required: false
+        type: string
+
+env:
+  AZURE_RESOURCE_GROUP: fairgrounds-deltashare-rg
+  AZURE_LOCATION: eastus
+  ACR_NAME: fairgroundsdeltashareacr
+  CONTAINER_GROUP_NAME: fairgrounds-deltashare-${{ github.event.inputs.environment }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create Resource Group
+      run: |
+        az group create \
+          --name ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }}
+
+    - name: Create Azure Container Registry
+      run: |
+        az acr create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.ACR_NAME }} \
+          --sku Basic \
+          --admin-enabled true
+
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ env.ACR_NAME }}
+
+    - name: Build and push Delta Sharing server image
+      run: |
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }} .
+        docker push ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
+
+    - name: Build and push MinIO image with data
+      run: |
+        cat << 'EOF' > Dockerfile.minio
+        FROM minio/minio:latest
+        COPY sample_data /data/sample_data
+        EOF
+        docker build -f Dockerfile.minio -t ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }} .
+        docker push ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }}
+
+    - name: Set bearer token
+      run: |
+        if [ -n "${{ github.event.inputs.bearer_token }}" ]; then
+          echo "BEARER_TOKEN=${{ github.event.inputs.bearer_token }}" >> $GITHUB_ENV
+        else
+          echo "BEARER_TOKEN=${{ secrets.DELTA_SHARING_BEARER_TOKEN }}" >> $GITHUB_ENV
+        fi
+
+    - name: Deploy MinIO to Azure Container Instances
+      run: |
+        az container create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.CONTAINER_GROUP_NAME }}-minio \
+          --image ${{ env.ACR_NAME }}.azurecr.io/minio-with-data:${{ github.sha }} \
+          --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+          --registry-username ${{ env.ACR_NAME }} \
+          --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \
+          --dns-name-label ${{ env.CONTAINER_GROUP_NAME }}-minio \
+          --ports 9000 9001 \
+          --environment-variables \
+            MINIO_ROOT_USER=minioadmin \
+            MINIO_ROOT_PASSWORD=minioadmin123 \
+          --command-line "server /data --console-address :9001" \
+          --cpu 1 \
+          --memory 2
+
+    - name: Deploy Delta Sharing Server to Azure Container Instances
+      run: |
+        az container create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.CONTAINER_GROUP_NAME }}-deltashare \
+          --image ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }} \
+          --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
+          --registry-username ${{ env.ACR_NAME }} \
+          --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \
+          --dns-name-label ${{ env.CONTAINER_GROUP_NAME }}-deltashare \
+          --ports 8080 \
+          --environment-variables \
+            DELTA_SHARING_BEARER_TOKEN="${{ env.BEARER_TOKEN }}" \
+          --cpu 1 \
+          --memory 2
+
+    - name: Get deployment information
+      run: |
+        echo "=== Deployment Complete ==="
+        echo "MinIO Console: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9001"
+        echo "MinIO API: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9000"
+        echo "Delta Sharing Server: http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080"
+        echo ""
+        echo "Bearer Token: ${{ env.BEARER_TOKEN }}"
+        echo ""
+        echo "Test connection with:"
+        echo "curl -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080/shares"
+
+    - name: Update CLAUDE.md with deployment info
+      run: |
+        if ! grep -q "## Recent Deployments" CLAUDE.md; then
+          echo "" >> CLAUDE.md
+          echo "## Recent Deployments" >> CLAUDE.md
+        fi
+        echo "" >> CLAUDE.md
+        echo "### Deployment $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> CLAUDE.md
+        echo "- Environment: ${{ github.event.inputs.environment }}" >> CLAUDE.md
+        echo "- Commit: ${{ github.sha }}" >> CLAUDE.md
+        echo "- Delta Sharing Server: http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080" >> CLAUDE.md
+        echo "- MinIO Console: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9001" >> CLAUDE.md
+
+    - name: Commit deployment info (if changed)
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        if git diff --quiet CLAUDE.md; then
+          echo "No changes to commit"
+        else
+          git add CLAUDE.md
+          git commit -m "Update deployment info for ${{ github.event.inputs.environment }} environment [skip ci]"
+          git push
+        fi
