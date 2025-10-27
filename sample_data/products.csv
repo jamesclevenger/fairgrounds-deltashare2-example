@@ -1,0 +1,11 @@
+product_id,product_name,category,price,stock_quantity,supplier,description
+101,Widget A,Electronics,29.99,150,TechCorp,High-quality electronic widget
+102,Widget B,Electronics,49.99,75,TechCorp,Advanced electronic widget with premium features
+103,Widget C,Home & Garden,19.99,200,HomePlus,Versatile home improvement widget
+104,Widget D,Industrial,89.99,50,IndustrialMax,Heavy-duty industrial widget for professional use
+105,Widget E,Electronics,39.99,100,TechCorp,Mid-range electronic widget
+106,Widget F,Home & Garden,24.99,175,HomePlus,Compact home utility widget
+107,Widget G,Industrial,129.99,25,IndustrialMax,Premium industrial widget with extended warranty
+108,Widget H,Electronics,15.99,300,TechCorp,Entry-level electronic widget
+109,Widget I,Home & Garden,34.99,125,HomePlus,Multi-purpose home widget set
+110,Widget J,Industrial,199.99,10,IndustrialMax,Professional-grade industrial widget system

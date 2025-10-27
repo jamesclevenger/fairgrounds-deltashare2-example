@@ -1,0 +1,11 @@
+customer_id,name,email,city,state,country,registration_date
+1,John Smith,john.smith@email.com,New York,NY,USA,2023-01-15
+2,Sarah Johnson,sarah.johnson@email.com,Los Angeles,CA,USA,2023-02-20
+3,Mike Brown,mike.brown@email.com,Chicago,IL,USA,2023-03-10
+4,Emily Davis,emily.davis@email.com,Houston,TX,USA,2023-04-05
+5,David Wilson,david.wilson@email.com,Phoenix,AZ,USA,2023-05-12
+6,Lisa Anderson,lisa.anderson@email.com,Philadelphia,PA,USA,2023-06-18
+7,Robert Taylor,robert.taylor@email.com,San Antonio,TX,USA,2023-07-22
+8,Jennifer White,jennifer.white@email.com,San Diego,CA,USA,2023-08-14
+9,Christopher Lee,christopher.lee@email.com,Dallas,TX,USA,2023-09-03
+10,Amanda Garcia,amanda.garcia@email.com,San Jose,CA,USA,2023-10-08

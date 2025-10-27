@@ -1,0 +1,16 @@
+order_id,customer_id,product_name,quantity,price,order_date,status
+1001,1,Widget A,2,29.99,2023-01-16,completed
+1002,2,Widget B,1,49.99,2023-02-21,completed
+1003,3,Widget C,3,19.99,2023-03-11,pending
+1004,1,Widget A,1,29.99,2023-03-15,completed
+1005,4,Widget D,2,89.99,2023-04-06,shipped
+1006,5,Widget B,1,49.99,2023-05-13,completed
+1007,2,Widget C,5,19.99,2023-06-01,completed
+1008,6,Widget A,2,29.99,2023-06-19,pending
+1009,7,Widget D,1,89.99,2023-07-23,shipped
+1010,3,Widget B,2,49.99,2023-08-05,completed
+1011,8,Widget C,4,19.99,2023-08-15,completed
+1012,9,Widget A,3,29.99,2023-09-04,pending
+1013,10,Widget D,1,89.99,2023-10-09,shipped
+1014,4,Widget B,2,49.99,2023-10-15,completed
+1015,6,Widget C,1,19.99,2023-10-20,completed

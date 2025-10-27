@@ -1,0 +1,28 @@
+# Delta Sharing Server Configuration
+version: 1
+shares:
+  - name: "fairgrounds_share"
+    schemas:
+      - name: "sample_data"
+        tables:
+          - name: "customers"
+            location: "file:///data/customers.csv"
+          - name: "orders" 
+            location: "file:///data/orders.csv"
+          - name: "products"
+            location: "file:///data/products.csv"
+
+# Host and port configuration
+host: "0.0.0.0"
+port: 8080
+
+# Authentication
+authorization:
+  bearerToken: "${DELTA_SHARING_BEARER_TOKEN}"
+
+# Enable CORS for web clients
+cors:
+  enabled: true
+  allowedOrigins: ["*"]
+  allowedMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+  allowedHeaders: ["*"]
