@@ -107,6 +107,7 @@ jobs:
           --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
           --registry-username ${{ env.ACR_NAME }} \
           --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \
+          --dns-name-label ${{ env.CONTAINER_GROUP_NAME }}-deltashare \
           --ports 8080 \
           --os-type Linux \
           --environment-variables \
