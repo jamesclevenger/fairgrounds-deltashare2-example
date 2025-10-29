@@ -129,204 +129,69 @@ jobs:
         echo "CONTAINER_IP=$CONTAINER_IP" >> $GITHUB_ENV
         echo "Delta Sharing Container IP: $CONTAINER_IP"
 
-    - name: Create Application Gateway with HTTPS
+    - name: Create Azure Front Door for HTTPS with Trusted Certificate
       run: |
-        # Create self-signed certificate
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-          -keyout appgw-cert.key \
-          -out appgw-cert.crt \
-          -subj "/C=US/ST=State/L=City/O=Organization/CN=${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com"
-        
-        # Convert to PFX format (with empty password)
-        openssl pkcs12 -export -out appgw-cert.pfx -inkey appgw-cert.key -in appgw-cert.crt -passout pass:TempPass123
-        
-        # Create Application Gateway with built-in template
-        cat > appgw-template.json << 'EOF'
-        {
-          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-          "contentVersion": "1.0.0.0",
-          "parameters": {
-            "applicationGatewayName": {"type": "string"},
-            "location": {"type": "string"},
-            "backendIpAddress": {"type": "string"},
-            "dnsName": {"type": "string"}
-          },
-          "resources": [
-            {
-              "type": "Microsoft.Network/publicIPAddresses",
-              "apiVersion": "2020-06-01",
-              "name": "[concat(parameters('applicationGatewayName'), '-pip')]",
-              "location": "[parameters('location')]",
-              "sku": {"name": "Standard"},
-              "properties": {
-                "publicIPAllocationMethod": "Static",
-                "dnsSettings": {
-                  "domainNameLabel": "[parameters('dnsName')]"
-                }
-              }
-            },
-            {
-              "type": "Microsoft.Network/virtualNetworks",
-              "apiVersion": "2020-06-01", 
-              "name": "[concat(parameters('applicationGatewayName'), '-vnet')]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "addressSpace": {"addressPrefixes": ["10.0.0.0/16"]},
-                "subnets": [
-                  {
-                    "name": "default",
-                    "properties": {"addressPrefix": "10.0.1.0/24"}
-                  }
-                ]
-              }
-            },
-            {
-              "type": "Microsoft.Network/applicationGateways",
-              "apiVersion": "2020-06-01",
-              "name": "[parameters('applicationGatewayName')]",
-              "location": "[parameters('location')]",
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/publicIPAddresses', concat(parameters('applicationGatewayName'), '-pip'))]",
-                "[resourceId('Microsoft.Network/virtualNetworks', concat(parameters('applicationGatewayName'), '-vnet'))]"
-              ],
-              "properties": {
-                "sku": {"name": "Standard_v2", "tier": "Standard_v2", "capacity": 1},
-                "gatewayIPConfigurations": [
-                  {
-                    "name": "appGatewayIpConfig",
-                    "properties": {
-                      "subnet": {
-                        "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', concat(parameters('applicationGatewayName'), '-vnet'), 'default')]"
-                      }
-                    }
-                  }
-                ],
-                "frontendIPConfigurations": [
-                  {
-                    "name": "appGatewayFrontendIP",
-                    "properties": {
-                      "publicIPAddress": {
-                        "id": "[resourceId('Microsoft.Network/publicIPAddresses', concat(parameters('applicationGatewayName'), '-pip'))]"
-                      }
-                    }
-                  }
-                ],
-                "frontendPorts": [
-                  {"name": "port_80", "properties": {"port": 80}},
-                  {"name": "port_443", "properties": {"port": 443}}
-                ],
-                "backendAddressPools": [
-                  {
-                    "name": "appGatewayBackendPool",
-                    "properties": {
-                      "backendAddresses": [
-                        {"ipAddress": "[parameters('backendIpAddress')]"}
-                      ]
-                    }
-                  }
-                ],
-                "backendHttpSettingsCollection": [
-                  {
-                    "name": "appGatewayBackendHttpSettings",
-                    "properties": {
-                      "port": 8080,
-                      "protocol": "Http",
-                      "cookieBasedAffinity": "Disabled"
-                    }
-                  }
-                ],
-                "httpListeners": [
-                  {
-                    "name": "appGatewayHttpListener",
-                    "properties": {
-                      "frontendIPConfiguration": {
-                        "id": "[resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', parameters('applicationGatewayName'), 'appGatewayFrontendIP')]"
-                      },
-                      "frontendPort": {
-                        "id": "[resourceId('Microsoft.Network/applicationGateways/frontendPorts', parameters('applicationGatewayName'), 'port_80')]"
-                      },
-                      "protocol": "Http"
-                    }
-                  }
-                ],
-                "requestRoutingRules": [
-                  {
-                    "name": "rule1",
-                    "properties": {
-                      "ruleType": "Basic",
-                      "priority": 1000,
-                      "httpListener": {
-                        "id": "[resourceId('Microsoft.Network/applicationGateways/httpListeners', parameters('applicationGatewayName'), 'appGatewayHttpListener')]"
-                      },
-                      "backendAddressPool": {
-                        "id": "[resourceId('Microsoft.Network/applicationGateways/backendAddressPools', parameters('applicationGatewayName'), 'appGatewayBackendPool')]"
-                      },
-                      "backendHttpSettings": {
-                        "id": "[resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', parameters('applicationGatewayName'), 'appGatewayBackendHttpSettings')]"
-                      }
-                    }
-                  }
-                ]
-              }
-            }
-          ],
-          "outputs": {
-            "publicIPAddress": {
-              "type": "string",
-              "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', concat(parameters('applicationGatewayName'), '-pip'))).ipAddress]"
-            },
-            "fqdn": {
-              "type": "string", 
-              "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', concat(parameters('applicationGatewayName'), '-pip'))).dnsSettings.fqdn]"
-            }
-          }
-        }
-        EOF
-        
-        # Deploy Application Gateway using ARM template
-        az deployment group create \
+        # Create Front Door profile (Standard tier for managed certificates)
+        az afd profile create \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-          --template-file appgw-template.json \
-          --parameters \
-            applicationGatewayName=${{ env.APP_GATEWAY_NAME }} \
-            location=${{ env.AZURE_LOCATION }} \
-            backendIpAddress=${{ env.CONTAINER_IP }} \
-            dnsName=${{ env.CONTAINER_GROUP_NAME }}-gateway
+          --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
+          --sku Standard_AzureFrontDoor
         
-        echo "Application Gateway deployed successfully"
-
-    - name: Add HTTPS Support to Application Gateway
-      run: |
-        # Upload certificate to Application Gateway
-        az network application-gateway ssl-cert create \
+        # Create endpoint
+        az afd endpoint create \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
-          --name appgw-ssl-cert \
-          --cert-file appgw-cert.pfx \
-          --cert-password TempPass123
+          --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
+          --endpoint-name ${{ env.CONTAINER_GROUP_NAME }}-endpoint \
+          --enabled-state Enabled
         
-        # Add HTTPS listener
-        az network application-gateway http-listener create \
+        # Create origin group
+        az afd origin-group create \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
-          --name httpsListener \
-          --frontend-ip appGatewayFrontendIP \
-          --frontend-port port_443 \
-          --protocol Https \
-          --ssl-cert appgw-ssl-cert
+          --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
+          --origin-group-name default-origin-group \
+          --probe-request-type GET \
+          --probe-protocol Http \
+          --probe-interval-in-seconds 120 \
+          --probe-path /health
         
-        # Add HTTPS routing rule
-        az network application-gateway rule create \
+        # Create origin (backend)
+        az afd origin create \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
-          --name httpsRule \
-          --http-listener httpsListener \
-          --rule-type Basic \
-          --address-pool appGatewayBackendPool \
-          --http-settings appGatewayBackendHttpSettings \
-          --priority 2000
+          --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
+          --origin-group-name default-origin-group \
+          --origin-name deltashare-origin \
+          --origin-host-header ${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io \
+          --host-name ${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io \
+          --http-port 8080 \
+          --https-port 443 \
+          --priority 1 \
+          --weight 1000 \
+          --enabled-state Enabled
         
-        echo "HTTPS configuration added successfully"
+        # Create route
+        az afd route create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
+          --endpoint-name ${{ env.CONTAINER_GROUP_NAME }}-endpoint \
+          --route-name default-route \
+          --origin-group default-origin-group \
+          --supported-protocols Http Https \
+          --patterns-to-match "/*" \
+          --forwarding-protocol HttpOnly \
+          --link-to-default-domain Enabled \
+          --https-redirect Enabled
+        
+        echo "Azure Front Door created successfully"
+        
+        # Get Front Door endpoint URL
+        FRONTDOOR_ENDPOINT=$(az afd endpoint show \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
+          --endpoint-name ${{ env.CONTAINER_GROUP_NAME }}-endpoint \
+          --query "hostName" -o tsv)
+        
+        echo "FRONTDOOR_ENDPOINT=https://$FRONTDOOR_ENDPOINT" >> $GITHUB_ENV
+        echo "Front Door endpoint: https://$FRONTDOOR_ENDPOINT"
 
     - name: Get deployment information
       run: |
@@ -334,14 +199,15 @@ jobs:
         echo "MinIO Console: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9001"
         echo "MinIO API: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9000"
         echo "Delta Sharing Server (Direct): http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080"
-        echo "Delta Sharing Server (HTTPS via App Gateway): https://${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com"
+        echo "Delta Sharing Server (HTTPS via Front Door): ${{ env.FRONTDOOR_ENDPOINT }}"
+        echo "nginx HTTPS proxy: https://${{ env.CONTAINER_GROUP_NAME }}-https.${{ env.AZURE_LOCATION }}.azurecontainer.io"
         echo ""
         echo "Bearer Token: ${{ env.BEARER_TOKEN }}"
         echo ""
-        echo "Test HTTPS connection with:"
-        echo "curl -k -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' https://${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com/shares"
+        echo "Test Front Door HTTPS (trusted certificate):"
+        echo "curl -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' ${{ env.FRONTDOOR_ENDPOINT }}/shares"
         echo ""
-        echo "Note: Using -k flag to ignore self-signed certificate warnings"
+        echo "Note: Front Door provides Microsoft-managed SSL certificate (trusted by all clients)"
 
     - name: Update CLAUDE.md with deployment info
       run: |
@@ -353,7 +219,7 @@ jobs:
         echo "### Deployment $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> CLAUDE.md
         echo "- Environment: ${{ github.event.inputs.environment }}" >> CLAUDE.md
         echo "- Commit: ${{ github.sha }}" >> CLAUDE.md
-        echo "- Delta Sharing Server (HTTPS): https://${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com" >> CLAUDE.md
+        echo "- Delta Sharing Server (HTTPS Front Door): ${{ env.FRONTDOOR_ENDPOINT }}" >> CLAUDE.md
         echo "- Delta Sharing Server (Direct): http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080" >> CLAUDE.md
         echo "- MinIO Console: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9001" >> CLAUDE.md
 

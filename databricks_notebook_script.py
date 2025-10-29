@@ -26,7 +26,7 @@ print(f"Delta Sharing version: {delta_sharing.__version__}")
 # Your Azure Delta Share deployment configuration
 DELTA_SHARE_CONFIG = {
     "shareCredentialsVersion": 1,
-    "endpoint": "https://fairgrounds-deltashare-development-gateway.eastus.cloudapp.azure.com",
+    "endpoint": "https://fairgrounds-deltashare-production-endpoint-XXXXXXXX.z01.azurefd.net",
     "bearerToken": "9b633f0dc26742388aeadda89b88e5f0"
 }
 
