@@ -144,7 +144,7 @@ jobs:
           --endpoint-name ${{ env.CONTAINER_GROUP_NAME }}-endpoint \
           --enabled-state Enabled
         
-        # Create origin group
+        # Create origin group with required load balancing settings
         az afd origin-group create \
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
           --profile-name ${{ env.CONTAINER_GROUP_NAME }}-frontdoor \
@@ -152,7 +152,10 @@ jobs:
           --probe-request-type GET \
           --probe-protocol Http \
           --probe-interval-in-seconds 120 \
-          --probe-path /health
+          --probe-path /health \
+          --sample-size 4 \
+          --successful-samples-required 3 \
+          --additional-latency-in-milliseconds 50
         
         # Create origin (backend)
         az afd origin create \
