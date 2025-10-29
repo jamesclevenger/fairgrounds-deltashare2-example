@@ -21,6 +21,9 @@ env:
   AZURE_LOCATION: eastus
   ACR_NAME: fairgroundsdeltashareacr
   CONTAINER_GROUP_NAME: fairgrounds-deltashare-${{ github.event.inputs.environment }}
+  APP_GATEWAY_NAME: fairgrounds-deltashare-appgw-${{ github.event.inputs.environment }}
+  VNET_NAME: fairgrounds-deltashare-vnet
+  SUBNET_NAME: fairgrounds-deltashare-subnet
 
 jobs:
   build-and-deploy:
@@ -95,6 +98,16 @@ jobs:
           --cpu 1 \
           --memory 2
 
+    - name: Create Virtual Network for Application Gateway
+      run: |
+        # Create VNet and subnet for Application Gateway
+        az network vnet create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.VNET_NAME }} \
+          --address-prefix 10.0.0.0/16 \
+          --subnet-name ${{ env.SUBNET_NAME }} \
+          --subnet-prefix 10.0.1.0/24
+
     - name: Deploy Delta Sharing Server to Azure Container Instances
       run: |
         az container create \
@@ -104,7 +117,6 @@ jobs:
           --registry-login-server ${{ env.ACR_NAME }}.azurecr.io \
           --registry-username ${{ env.ACR_NAME }} \
           --registry-password $(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv) \
-          --dns-name-label ${{ env.CONTAINER_GROUP_NAME }}-deltashare \
           --ports 8080 \
           --os-type Linux \
           --environment-variables \
@@ -116,17 +128,99 @@ jobs:
           --cpu 1 \
           --memory 2
 
+    - name: Get Container Instance IP
+      run: |
+        CONTAINER_IP=$(az container show --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --name ${{ env.CONTAINER_GROUP_NAME }}-deltashare --query "ipAddress.ip" -o tsv)
+        echo "CONTAINER_IP=$CONTAINER_IP" >> $GITHUB_ENV
+        echo "Delta Sharing Container IP: $CONTAINER_IP"
+
+    - name: Create Application Gateway Public IP
+      run: |
+        az network public-ip create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.APP_GATEWAY_NAME }}-pip \
+          --allocation-method Static \
+          --sku Standard \
+          --dns-name ${{ env.CONTAINER_GROUP_NAME }}-gateway
+
+    - name: Create Application Gateway
+      run: |
+        az network application-gateway create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.APP_GATEWAY_NAME }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --capacity 1 \
+          --sku Standard_v2 \
+          --public-ip-address ${{ env.APP_GATEWAY_NAME }}-pip \
+          --vnet-name ${{ env.VNET_NAME }} \
+          --subnet ${{ env.SUBNET_NAME }} \
+          --servers ${{ env.CONTAINER_IP }} \
+          --priority 1000 \
+          --http-settings-cookie-based-affinity Disabled \
+          --http-settings-port 8080 \
+          --http-settings-protocol Http \
+          --frontend-port 80
+
+    - name: Add HTTPS Frontend Configuration
+      run: |
+        # Create self-signed certificate for development
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+          -keyout appgw-cert.key \
+          -out appgw-cert.crt \
+          -subj "/C=US/ST=State/L=City/O=Organization/CN=${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com"
+        
+        # Convert to PFX format
+        openssl pkcs12 -export -out appgw-cert.pfx -inkey appgw-cert.key -in appgw-cert.crt -passout pass:
+        
+        # Upload certificate to Application Gateway
+        az network application-gateway ssl-cert create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
+          --name appgw-ssl-cert \
+          --cert-file appgw-cert.pfx
+        
+        # Add HTTPS frontend port
+        az network application-gateway frontend-port create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
+          --name httpsPort \
+          --port 443
+        
+        # Add HTTPS listener
+        az network application-gateway http-listener create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
+          --name httpsListener \
+          --frontend-ip appGatewayFrontendIP \
+          --frontend-port httpsPort \
+          --protocol Https \
+          --ssl-cert appgw-ssl-cert
+        
+        # Add HTTPS routing rule
+        az network application-gateway rule create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --gateway-name ${{ env.APP_GATEWAY_NAME }} \
+          --name httpsRule \
+          --http-listener httpsListener \
+          --rule-type Basic \
+          --address-pool appGatewayBackendPool \
+          --http-settings appGatewayBackendHttpSettings \
+          --priority 2000
+
     - name: Get deployment information
       run: |
         echo "=== Deployment Complete ==="
         echo "MinIO Console: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9001"
         echo "MinIO API: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9000"
-        echo "Delta Sharing Server: http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080"
+        echo "Delta Sharing Server (Direct): http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080"
+        echo "Delta Sharing Server (HTTPS via App Gateway): https://${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com"
         echo ""
         echo "Bearer Token: ${{ env.BEARER_TOKEN }}"
         echo ""
-        echo "Test connection with:"
-        echo "curl -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080/shares"
+        echo "Test HTTPS connection with:"
+        echo "curl -k -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' https://${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com/shares"
+        echo ""
+        echo "Note: Using -k flag to ignore self-signed certificate warnings"
 
     - name: Update CLAUDE.md with deployment info
       run: |
@@ -138,7 +232,8 @@ jobs:
         echo "### Deployment $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> CLAUDE.md
         echo "- Environment: ${{ github.event.inputs.environment }}" >> CLAUDE.md
         echo "- Commit: ${{ github.sha }}" >> CLAUDE.md
-        echo "- Delta Sharing Server: http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080" >> CLAUDE.md
+        echo "- Delta Sharing Server (HTTPS): https://${{ env.CONTAINER_GROUP_NAME }}-gateway.${{ env.AZURE_LOCATION }}.cloudapp.azure.com" >> CLAUDE.md
+        echo "- Delta Sharing Server (Direct): http://${{ env.CONTAINER_GROUP_NAME }}-deltashare.${{ env.AZURE_LOCATION }}.azurecontainer.io:8080" >> CLAUDE.md
         echo "- MinIO Console: http://${{ env.CONTAINER_GROUP_NAME }}-minio.${{ env.AZURE_LOCATION }}.azurecontainer.io:9001" >> CLAUDE.md
 
     - name: Commit deployment info (if changed)
