@@ -72,8 +72,11 @@ def check_auth():
     """Check authentication for all requests except health"""
     # Log all requests for debugging
     print(f"Request: {request.method} {request.path}")
+    print(f"Query params: {dict(request.args)}")
     print(f"Endpoint: {request.endpoint}")
-    print(f"Headers: {dict(request.headers)}")
+    print(f"User-Agent: {request.headers.get('User-Agent', 'N/A')}")
+    if request.method == 'POST' and request.is_json:
+        print(f"Request body: {request.get_json()}")
     
     if request.endpoint == 'health':
         return
@@ -351,7 +354,11 @@ def get_table_metadata(share_name, schema_name, table_name):
             "id": TABLE_IDS.get(table_name, str(uuid.uuid4())),
             "name": table_name,
             "format": {
-                "provider": "csv"
+                "provider": "csv",
+                "options": {
+                    "header": "true",
+                    "inferSchema": "true"
+                }
             },
             "schemaString": json.dumps(schema),
             "partitionColumns": [],
@@ -458,8 +465,10 @@ def query_table(share_name, schema_name, table_name):
     if table_name not in ["customers", "orders", "products"]:
         return jsonify({"error": "Table not found"}), 404
     
-    # Get the external URL for this container app
+    # Get the external URL for this container app - ensure HTTPS
     external_url = request.host_url.rstrip('/')
+    if external_url.startswith('http://'):
+        external_url = external_url.replace('http://', 'https://')
     
     # Return proxy URL with token parameter instead of direct MinIO URL
     file_url = f"{external_url}/files/sample_data/{table_name}.csv?token={BEARER_TOKEN}"
@@ -474,6 +483,8 @@ def query_table(share_name, schema_name, table_name):
                 "id": str(uuid.uuid4()),
                 "partitionValues": {},
                 "size": 1024,
+                "timestamp": int(datetime.now().timestamp() * 1000),
+                "version": 1,
                 "stats": json.dumps({
                     "numRecords": 10,
                     "minValues": {},
