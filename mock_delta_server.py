@@ -70,6 +70,42 @@ def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy"})
 
+@app.route('/debug/minio')
+def debug_minio():
+    """Debug MinIO connection and bucket contents"""
+    try:
+        minio_client = get_minio_client()
+        
+        # Check bucket exists
+        bucket_exists = minio_client.bucket_exists(MINIO_BUCKET)
+        
+        # List objects if bucket exists
+        objects = []
+        if bucket_exists:
+            try:
+                for obj in minio_client.list_objects(MINIO_BUCKET, recursive=True):
+                    objects.append({
+                        "name": obj.object_name,
+                        "size": obj.size,
+                        "last_modified": obj.last_modified.isoformat() if obj.last_modified else None
+                    })
+            except Exception as e:
+                objects = [f"Error listing objects: {e}"]
+        
+        return jsonify({
+            "minio_endpoint": MINIO_ENDPOINT,
+            "bucket_name": MINIO_BUCKET,
+            "bucket_exists": bucket_exists,
+            "objects": objects[:10]  # Limit to first 10 objects
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"MinIO connection failed: {type(e).__name__}: {e}",
+            "minio_endpoint": MINIO_ENDPOINT,
+            "bucket_name": MINIO_BUCKET
+        }), 500
+
 @app.route('/shares')
 def list_shares():
     """List all shares"""
@@ -288,35 +324,53 @@ def proxy_file(object_path):
     """Proxy file requests to MinIO"""
     try:
         print(f"Proxying file request for: {object_path}")
+        print(f"MinIO endpoint: {MINIO_ENDPOINT}")
+        print(f"MinIO bucket: {MINIO_BUCKET}")
+        
+        # Initialize MinIO if needed
+        if not initialize_minio():
+            print("Failed to initialize MinIO")
+            return jsonify({"error": "Storage service unavailable"}), 503
+        
         minio_client = get_minio_client()
         
         # Check if object exists
         try:
-            minio_client.stat_object(MINIO_BUCKET, object_path)
+            stat = minio_client.stat_object(MINIO_BUCKET, object_path)
+            print(f"Found object: {object_path}, size: {stat.size}")
         except S3Error as e:
+            print(f"S3Error checking object: {e.code} - {e}")
             if e.code == 'NoSuchKey':
-                return jsonify({"error": "File not found"}), 404
+                return jsonify({"error": f"File not found: {object_path}"}), 404
             else:
-                raise
+                return jsonify({"error": f"Storage error: {e.code}"}), 500
         
         # Get object from MinIO
-        response = minio_client.get_object(MINIO_BUCKET, object_path)
-        
-        # Stream the file content
-        def generate():
-            try:
-                for chunk in response.stream(8192):
-                    yield chunk
-            finally:
-                response.close()
-                response.release_conn()
-        
-        # Return streaming response
-        return Response(generate(), mimetype='text/csv')
+        try:
+            print(f"Getting object from MinIO: {object_path}")
+            response = minio_client.get_object(MINIO_BUCKET, object_path)
+            
+            # Read all data (simpler approach for small files)
+            data = response.read()
+            response.close()
+            response.release_conn()
+            
+            print(f"Successfully retrieved {len(data)} bytes")
+            
+            # Return the file content
+            return Response(data, mimetype='text/csv', headers={
+                'Content-Disposition': f'attachment; filename="{object_path.split("/")[-1]}"'
+            })
+            
+        except Exception as e:
+            print(f"Error reading from MinIO: {type(e).__name__}: {e}")
+            return jsonify({"error": f"Failed to read file: {str(e)}"}), 500
         
     except Exception as e:
         print(f"Error proxying file: {type(e).__name__}: {e}")
-        return jsonify({"error": "Unable to retrieve file"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Internal error: {str(e)}"}), 500
 
 @app.errorhandler(404)
 def not_found(error):
