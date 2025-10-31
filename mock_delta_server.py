@@ -458,7 +458,7 @@ def generate_presigned_url(object_name, expiry_hours=1):
 
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/query', methods=['POST'])
 def query_table(share_name, schema_name, table_name):
-    """Query table data"""
+    """Query table data - returns NDJSON format as per Delta Sharing protocol"""
     if share_name != "fairgrounds_share" or schema_name != "sample_data":
         return jsonify({"error": "Table not found"}), 404
     
@@ -473,27 +473,92 @@ def query_table(share_name, schema_name, table_name):
     # Return proxy URL with token parameter instead of direct MinIO URL
     file_url = f"{external_url}/files/sample_data/{table_name}.csv?token={BEARER_TOKEN}"
     
-    return jsonify({
+    # Get table schema for metadata
+    table_schemas = {
+        "customers": {
+            "type": "struct",
+            "fields": [
+                {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "customer_name", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "email", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "created_at", "type": "timestamp", "nullable": True, "metadata": {}}
+            ]
+        },
+        "orders": {
+            "type": "struct", 
+            "fields": [
+                {"name": "order_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "order_date", "type": "timestamp", "nullable": True, "metadata": {}},
+                {"name": "total_amount", "type": "decimal(10,2)", "nullable": True, "metadata": {}}
+            ]
+        },
+        "products": {
+            "type": "struct",
+            "fields": [
+                {"name": "product_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "product_name", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "price", "type": "decimal(10,2)", "nullable": True, "metadata": {}},
+                {"name": "category", "type": "string", "nullable": True, "metadata": {}}
+            ]
+        }
+    }
+    
+    schema = table_schemas.get(table_name, table_schemas["customers"])
+    
+    # Build NDJSON response as per Delta Sharing protocol
+    # Line 1: Protocol object
+    protocol_line = json.dumps({
         "protocol": {
             "minReaderVersion": 1
-        },
-        "files": [
-            {
-                "url": file_url,
-                "id": str(uuid.uuid4()),
-                "partitionValues": {},
-                "size": 1024,
-                "timestamp": int(datetime.now().timestamp() * 1000),
-                "version": 1,
-                "stats": json.dumps({
-                    "numRecords": 10,
-                    "minValues": {},
-                    "maxValues": {},
-                    "nullCount": {}
-                })
-            }
-        ]
+        }
     })
+    
+    # Line 2: Metadata object  
+    metadata_line = json.dumps({
+        "metaData": {
+            "id": TABLE_IDS.get(table_name, str(uuid.uuid4())),
+            "name": table_name,
+            "format": {
+                "provider": "csv",
+                "options": {
+                    "header": "true",
+                    "inferSchema": "true"
+                }
+            },
+            "schemaString": json.dumps(schema),
+            "partitionColumns": [],
+            "configuration": {},
+            "createdTime": int(datetime.now().timestamp() * 1000)
+        }
+    })
+    
+    # Line 3: File object
+    file_line = json.dumps({
+        "file": {
+            "url": file_url,
+            "id": str(uuid.uuid4()),
+            "partitionValues": {},
+            "size": 1024,
+            "timestamp": int(datetime.now().timestamp() * 1000),
+            "version": 1,
+            "stats": json.dumps({
+                "numRecords": 10,
+                "minValues": {},
+                "maxValues": {},
+                "nullCount": {}
+            })
+        }
+    })
+    
+    # Combine lines with newlines for NDJSON format
+    ndjson_response = f"{protocol_line}\n{metadata_line}\n{file_line}\n"
+    
+    return Response(
+        ndjson_response,
+        mimetype='application/x-ndjson; charset=utf-8',
+        headers={'Content-Type': 'application/x-ndjson; charset=utf-8'}
+    )
 
 @app.route('/files/<path:object_path>')
 def proxy_file(object_path):
