@@ -20,8 +20,8 @@ env:
   AZURE_RESOURCE_GROUP: fairgrounds-deltashare-rg
   AZURE_LOCATION: eastus
   ACR_NAME: fairgroundsdeltashareacr
-  CONTAINER_APP_ENV: fairgrounds-deltashare-env-${{ github.event.inputs.environment }}
-  CONTAINER_APP_NAME: fairgrounds-deltashare-${{ github.event.inputs.environment }}
+  CONTAINER_APP_ENV: fg-deltashare-env-${{ github.event.inputs.environment }}
+  CONTAINER_APP_NAME: fg-deltashare-${{ github.event.inputs.environment }}
 
 jobs:
   build-and-deploy:
