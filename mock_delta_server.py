@@ -12,11 +12,21 @@ from minio import Minio
 from minio.error import S3Error
 import urllib3
 import requests
+import uuid
 
 app = Flask(__name__)
 
 # Bearer token for authentication
 BEARER_TOKEN = os.getenv('DELTA_SHARING_BEARER_TOKEN', 'your-secure-bearer-token-here')
+
+# Fixed UUIDs for consistent responses
+SHARE_ID = "550e8400-e29b-41d4-a716-446655440000"
+SCHEMA_ID = "550e8400-e29b-41d4-a716-446655440001"
+TABLE_IDS = {
+    "customers": "550e8400-e29b-41d4-a716-446655440002",
+    "orders": "550e8400-e29b-41d4-a716-446655440003", 
+    "products": "550e8400-e29b-41d4-a716-446655440004"
+}
 
 # MinIO configuration
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'fairgrounds-deltashare-development-minio.eastus.azurecontainer.io:9000')
@@ -177,7 +187,7 @@ def list_shares():
         "items": [
             {
                 "name": "fairgrounds_share",
-                "id": "fairgrounds_share"
+                "id": SHARE_ID
             }
         ]
     }
@@ -201,7 +211,7 @@ def get_share(share_name):
     response_data = {
         "share": {
             "name": "fairgrounds_share",
-            "id": "fairgrounds_share"
+            "id": SHARE_ID
         }
     }
     print(f"Returning share data: {response_data}")
@@ -221,7 +231,8 @@ def list_schemas(share_name):
         "items": [
             {
                 "name": "sample_data",
-                "share": share_name
+                "share": share_name,
+                "id": SCHEMA_ID
             }
         ]
     })
@@ -238,19 +249,22 @@ def list_all_tables(share_name):
                 "name": "customers",
                 "schema": "sample_data",
                 "share": share_name,
-                "shareId": share_name
+                "shareId": SHARE_ID,
+                "id": TABLE_IDS["customers"]
             },
             {
                 "name": "orders", 
                 "schema": "sample_data",
                 "share": share_name,
-                "shareId": share_name
+                "shareId": SHARE_ID,
+                "id": TABLE_IDS["orders"]
             },
             {
                 "name": "products",
                 "schema": "sample_data",
                 "share": share_name,
-                "shareId": share_name
+                "shareId": SHARE_ID,
+                "id": TABLE_IDS["products"]
             }
         ]
     })
@@ -267,19 +281,22 @@ def list_tables(share_name, schema_name):
                 "name": "customers",
                 "schema": schema_name,
                 "share": share_name,
-                "shareId": share_name
+                "shareId": SHARE_ID,
+                "id": TABLE_IDS["customers"]
             },
             {
                 "name": "orders", 
                 "schema": schema_name,
                 "share": share_name,
-                "shareId": share_name
+                "shareId": SHARE_ID,
+                "id": TABLE_IDS["orders"]
             },
             {
                 "name": "products",
                 "schema": schema_name,
                 "share": share_name,
-                "shareId": share_name
+                "shareId": SHARE_ID,
+                "id": TABLE_IDS["products"]
             }
         ]
     })
@@ -331,7 +348,7 @@ def get_table_metadata(share_name, schema_name, table_name):
             "minReaderVersion": 1
         },
         "metaData": {
-            "id": f"mock-{table_name}-id",
+            "id": TABLE_IDS.get(table_name, str(uuid.uuid4())),
             "name": table_name,
             "format": {
                 "provider": "csv"
@@ -454,7 +471,7 @@ def query_table(share_name, schema_name, table_name):
         "files": [
             {
                 "url": file_url,
-                "id": f"mock-file-{table_name}",
+                "id": str(uuid.uuid4()),
                 "partitionValues": {},
                 "size": 1024,
                 "stats": json.dumps({
