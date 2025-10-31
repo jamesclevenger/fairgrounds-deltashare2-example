@@ -133,6 +133,35 @@ def list_schemas(share_name):
         ]
     })
 
+@app.route('/shares/<share_name>/all-tables')
+def list_all_tables(share_name):
+    """List all tables in a share (Databricks specific endpoint)"""
+    if share_name != "fairgrounds_share":
+        return jsonify({"error": "Share not found"}), 404
+    
+    return jsonify({
+        "items": [
+            {
+                "name": "customers",
+                "schema": "sample_data",
+                "share": share_name,
+                "shareId": share_name
+            },
+            {
+                "name": "orders", 
+                "schema": "sample_data",
+                "share": share_name,
+                "shareId": share_name
+            },
+            {
+                "name": "products",
+                "schema": "sample_data",
+                "share": share_name,
+                "shareId": share_name
+            }
+        ]
+    })
+
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables')
 def list_tables(share_name, schema_name):
     """List tables in a schema"""
