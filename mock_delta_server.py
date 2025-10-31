@@ -97,9 +97,19 @@ def check_auth():
 def after_request(response):
     """Log responses for debugging"""
     print(f"Response: {response.status_code}")
-    if response.content_type and 'application/json' in response.content_type:
+    if response.status_code >= 400:
+        print(f"ERROR RESPONSE: {response.status_code}")
         try:
-            print(f"Response body: {response.get_data(as_text=True)}")
+            print(f"Error body: {response.get_data(as_text=True)}")
+        except:
+            print("Could not log error body")
+    elif response.content_type and 'application/json' in response.content_type:
+        try:
+            body = response.get_data(as_text=True)
+            if len(body) > 500:
+                print(f"Response body (truncated): {body[:500]}...")
+            else:
+                print(f"Response body: {body}")
         except:
             print("Could not log response body")
     return response
@@ -689,9 +699,15 @@ def not_found(error):
 @app.route('/<path:path>')
 def catch_all(path):
     """Catch-all route for debugging missing endpoints"""
-    print(f"Unhandled request: {request.method} /{path}")
+    print(f"=== UNHANDLED REQUEST ===")
+    print(f"Method: {request.method}")
+    print(f"Path: /{path}")
     print(f"Query params: {dict(request.args)}")
     print(f"Headers: {dict(request.headers)}")
+    if request.method == 'POST':
+        print(f"POST body: {request.get_data()}")
+    print("=== END UNHANDLED REQUEST ===")
+    
     return jsonify({
         "error": "Endpoint not implemented",
         "method": request.method,
