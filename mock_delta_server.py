@@ -4,13 +4,14 @@ Mock Delta Sharing server for testing purposes.
 This implements the basic Delta Sharing REST API endpoints.
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import os
 import json
 from datetime import datetime, timedelta
 from minio import Minio
 from minio.error import S3Error
 import urllib3
+import requests
 
 app = Flask(__name__)
 
@@ -248,21 +249,19 @@ def query_table(share_name, schema_name, table_name):
     if table_name not in ["customers", "orders", "products"]:
         return jsonify({"error": "Table not found"}), 404
     
-    # Generate presigned URL for MinIO object
-    object_name = f"sample_data/{table_name}.csv"
-    presigned_url = generate_presigned_url(object_name)
+    # Get the external URL for this container app
+    external_url = request.host_url.rstrip('/')
     
-    if not presigned_url:
-        return jsonify({"error": "Unable to generate file access URL"}), 500
+    # Return proxy URL instead of direct MinIO URL
+    file_url = f"{external_url}/files/sample_data/{table_name}.csv"
     
-    # Return MinIO presigned URL for direct data access
     return jsonify({
         "protocol": {
             "minReaderVersion": 1
         },
         "files": [
             {
-                "url": presigned_url,
+                "url": file_url,
                 "id": f"mock-file-{table_name}",
                 "partitionValues": {},
                 "size": 1024,
@@ -275,6 +274,41 @@ def query_table(share_name, schema_name, table_name):
             }
         ]
     })
+
+@app.route('/files/<path:object_path>')
+def proxy_file(object_path):
+    """Proxy file requests to MinIO"""
+    try:
+        print(f"Proxying file request for: {object_path}")
+        minio_client = get_minio_client()
+        
+        # Check if object exists
+        try:
+            minio_client.stat_object(MINIO_BUCKET, object_path)
+        except S3Error as e:
+            if e.code == 'NoSuchKey':
+                return jsonify({"error": "File not found"}), 404
+            else:
+                raise
+        
+        # Get object from MinIO
+        response = minio_client.get_object(MINIO_BUCKET, object_path)
+        
+        # Stream the file content
+        def generate():
+            try:
+                for chunk in response.stream(8192):
+                    yield chunk
+            finally:
+                response.close()
+                response.release_conn()
+        
+        # Return streaming response
+        return Response(generate(), mimetype='text/csv')
+        
+    except Exception as e:
+        print(f"Error proxying file: {type(e).__name__}: {e}")
+        return jsonify({"error": "Unable to retrieve file"}), 500
 
 @app.errorhandler(404)
 def not_found(error):
