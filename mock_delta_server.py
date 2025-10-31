@@ -369,7 +369,8 @@ def get_table_metadata(share_name, schema_name, table_name):
                 "parquet.compression.codec": "zstd"
             },
             "createdTime": int(datetime.now().timestamp() * 1000)
-        }
+        },
+        "version": 1
     })
 
 def initialize_minio():
