@@ -533,7 +533,6 @@ def query_table(share_name, schema_name, table_name):
             "partitionValues": {},
             "size": 1024,
             "timestamp": int(datetime.now().timestamp() * 1000),
-            "version": 1,
             "stats": json.dumps({
                 "numRecords": 10,
                 "minValues": {},
@@ -543,13 +542,17 @@ def query_table(share_name, schema_name, table_name):
         }
     })
     
-    # Combine lines with newlines for NDJSON format
+    # Combine lines with newlines for NDJSON format (3 lines only)
     ndjson_response = f"{protocol_line}\n{metadata_line}\n{file_line}\n"
     
+    # Return with proper headers including Delta-Table-Version
     return Response(
         ndjson_response,
         mimetype='application/x-ndjson; charset=utf-8',
-        headers={'Content-Type': 'application/x-ndjson; charset=utf-8'}
+        headers={
+            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'Delta-Table-Version': '1'
+        }
     )
 
 @app.route('/files/<path:object_path>')
