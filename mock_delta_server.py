@@ -44,13 +44,27 @@ def verify_auth():
     """Verify bearer token authentication"""
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
+        print(f"Missing or invalid auth header: {auth_header}")
         return False
-    token = auth_header.split(' ')[1]
-    return token == BEARER_TOKEN
+    
+    try:
+        token = auth_header.split(' ')[1]
+        is_valid = token == BEARER_TOKEN
+        if not is_valid:
+            print(f"Invalid token provided: {token[:10]}... (expected: {BEARER_TOKEN[:10]}...)")
+        return is_valid
+    except IndexError:
+        print("Malformed Authorization header")
+        return False
 
 @app.before_request
 def check_auth():
     """Check authentication for all requests except health"""
+    # Log all requests for debugging
+    print(f"Request: {request.method} {request.path}")
+    print(f"Endpoint: {request.endpoint}")
+    print(f"Headers: {dict(request.headers)}")
+    
     if request.endpoint == 'health':
         return
     
@@ -63,7 +77,19 @@ def check_auth():
         # Fall through to header check
     
     if not verify_auth():
+        print("Authentication failed")
         return jsonify({"error": "Unauthorized"}), 401
+
+@app.after_request
+def after_request(response):
+    """Log responses for debugging"""
+    print(f"Response: {response.status_code}")
+    if response.content_type and 'application/json' in response.content_type:
+        try:
+            print(f"Response body: {response.get_data(as_text=True)}")
+        except:
+            print("Could not log response body")
+    return response
 
 @app.route('/health')
 def health():
@@ -131,13 +157,18 @@ def list_shares():
 @app.route('/shares/<share_name>')
 def get_share(share_name):
     """Get specific share information"""
+    print(f"Getting share info for: '{share_name}'")
+    
     if share_name != "fairgrounds_share":
+        print(f"Share not found: '{share_name}' != 'fairgrounds_share'")
         return jsonify({"error": "Share not found"}), 404
     
-    return jsonify({
+    response_data = {
         "name": "fairgrounds_share",
         "id": "fairgrounds_share"
-    })
+    }
+    print(f"Returning share data: {response_data}")
+    return jsonify(response_data)
 
 @app.route('/shares/<share_name>/schemas')
 def list_schemas(share_name):
@@ -458,8 +489,16 @@ def catch_all(path):
         ]
     }), 404
 
+@app.errorhandler(400)
+def bad_request(error):
+    """Handle 400 Bad Request errors"""
+    print(f"400 Bad Request: {error}")
+    return jsonify({"error": "Bad request"}), 400
+
 @app.errorhandler(500)
 def internal_error(error):
+    """Handle 500 Internal Server Error"""
+    print(f"500 Internal Server Error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
