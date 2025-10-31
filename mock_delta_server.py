@@ -54,6 +54,14 @@ def check_auth():
     if request.endpoint == 'health':
         return
     
+    # For file proxy, check token in query parameter or header
+    if request.endpoint == 'proxy_file':
+        # Check for token in query parameter first
+        token = request.args.get('token')
+        if token and token == BEARER_TOKEN:
+            return
+        # Fall through to header check
+    
     if not verify_auth():
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -252,8 +260,8 @@ def query_table(share_name, schema_name, table_name):
     # Get the external URL for this container app
     external_url = request.host_url.rstrip('/')
     
-    # Return proxy URL instead of direct MinIO URL
-    file_url = f"{external_url}/files/sample_data/{table_name}.csv"
+    # Return proxy URL with token parameter instead of direct MinIO URL
+    file_url = f"{external_url}/files/sample_data/{table_name}.csv?token={BEARER_TOKEN}"
     
     return jsonify({
         "protocol": {
