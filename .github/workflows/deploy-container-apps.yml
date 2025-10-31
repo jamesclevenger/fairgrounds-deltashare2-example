@@ -1,0 +1,197 @@
+name: Deploy to Azure Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - production
+      bearer_token:
+        description: 'Delta Sharing Bearer Token (optional - uses secret if not provided)'
+        required: false
+        type: string
+
+env:
+  AZURE_RESOURCE_GROUP: fairgrounds-deltashare-rg
+  AZURE_LOCATION: eastus
+  ACR_NAME: fairgroundsdeltashareacr
+  CONTAINER_APP_ENV: fairgrounds-deltashare-env-${{ github.event.inputs.environment }}
+  CONTAINER_APP_NAME: fairgrounds-deltashare-${{ github.event.inputs.environment }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Create Resource Group
+      run: |
+        az group create \
+          --name ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }}
+
+    - name: Create Azure Container Registry
+      run: |
+        az acr create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name ${{ env.ACR_NAME }} \
+          --sku Basic \
+          --admin-enabled true
+
+    - name: Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ env.ACR_NAME }}
+
+    - name: Build and push Delta Sharing server image
+      run: |
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }} .
+        docker push ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
+
+    - name: Build and push MinIO image
+      run: |
+        cat << 'EOF' > Dockerfile.minio
+        FROM minio/minio:latest
+        EXPOSE 9000 9001
+        CMD ["server", "/data", "--console-address", ":9001"]
+        EOF
+        docker build -f Dockerfile.minio -t ${{ env.ACR_NAME }}.azurecr.io/minio-simple:${{ github.sha }} .
+        docker push ${{ env.ACR_NAME }}.azurecr.io/minio-simple:${{ github.sha }}
+
+    - name: Set bearer token
+      run: |
+        if [ -n "${{ github.event.inputs.bearer_token }}" ]; then
+          echo "BEARER_TOKEN=${{ github.event.inputs.bearer_token }}" >> $GITHUB_ENV
+        else
+          echo "BEARER_TOKEN=${{ secrets.DELTA_SHARING_BEARER_TOKEN }}" >> $GITHUB_ENV
+        fi
+
+    - name: Install Azure Container Apps extension
+      run: az extension add --name containerapp --upgrade
+
+    - name: Create Container Apps Environment
+      run: |
+        az containerapp env create \
+          --name ${{ env.CONTAINER_APP_ENV }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }}
+
+    - name: Create Container App YAML configuration
+      run: |
+        # Get ACR credentials
+        ACR_USERNAME=$(az acr credential show --name ${{ env.ACR_NAME }} --query "username" -o tsv)
+        ACR_PASSWORD=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+        
+        cat << EOF > containerapp.yaml
+        properties:
+          configuration:
+            ingress:
+              external: true
+              targetPort: 8080
+              allowInsecure: false
+            registries:
+            - server: ${{ env.ACR_NAME }}.azurecr.io
+              username: $ACR_USERNAME
+              passwordSecretRef: registry-password
+            secrets:
+            - name: registry-password
+              value: $ACR_PASSWORD
+            - name: bearer-token
+              value: ${{ env.BEARER_TOKEN }}
+          template:
+            containers:
+            - image: ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
+              name: delta-sharing-server
+              env:
+              - name: DELTA_SHARING_BEARER_TOKEN
+                secretRef: bearer-token
+              - name: MINIO_ENDPOINT
+                value: "localhost:9000"
+              - name: MINIO_ROOT_USER
+                value: "minioadmin"
+              - name: MINIO_ROOT_PASSWORD
+                value: "minioadmin123"
+              - name: MINIO_BUCKET_NAME
+                value: "delta-sharing-data"
+              resources:
+                cpu: 0.5
+                memory: 1.0Gi
+            - image: ${{ env.ACR_NAME }}.azurecr.io/minio-simple:${{ github.sha }}
+              name: minio
+              env:
+              - name: MINIO_ROOT_USER
+                value: "minioadmin"
+              - name: MINIO_ROOT_PASSWORD
+                value: "minioadmin123"
+              resources:
+                cpu: 0.5
+                memory: 1.0Gi
+            scale:
+              minReplicas: 1
+              maxReplicas: 3
+        EOF
+
+    - name: Deploy Container App with multi-container configuration
+      run: |
+        az containerapp create \
+          --name ${{ env.CONTAINER_APP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --environment ${{ env.CONTAINER_APP_ENV }} \
+          --yaml containerapp.yaml
+
+    - name: Get Container App URL
+      run: |
+        CONTAINER_APP_URL=$(az containerapp show \
+          --name ${{ env.CONTAINER_APP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "properties.configuration.ingress.fqdn" -o tsv)
+        
+        echo "CONTAINER_APP_URL=https://$CONTAINER_APP_URL" >> $GITHUB_ENV
+        echo "Container App URL: https://$CONTAINER_APP_URL"
+
+    - name: Get deployment information
+      run: |
+        echo "=== Deployment Complete ==="
+        echo "Delta Sharing Server (HTTPS): ${{ env.CONTAINER_APP_URL }}"
+        echo "Bearer Token: ${{ env.BEARER_TOKEN }}"
+        echo ""
+        echo "Test Container App:"
+        echo "curl -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' ${{ env.CONTAINER_APP_URL }}/shares"
+        echo ""
+        echo "Note: Container Apps provides automatic HTTPS with managed certificates"
+
+    - name: Update CLAUDE.md with deployment info
+      run: |
+        if ! grep -q "## Recent Deployments" CLAUDE.md; then
+          echo "" >> CLAUDE.md
+          echo "## Recent Deployments" >> CLAUDE.md
+        fi
+        echo "" >> CLAUDE.md
+        echo "### Container Apps Deployment $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> CLAUDE.md
+        echo "- Environment: ${{ github.event.inputs.environment }}" >> CLAUDE.md
+        echo "- Commit: ${{ github.sha }}" >> CLAUDE.md
+        echo "- Delta Sharing Server (HTTPS): ${{ env.CONTAINER_APP_URL }}" >> CLAUDE.md
+        echo "- Deployment Type: Azure Container Apps" >> CLAUDE.md
+
+    - name: Commit deployment info (if changed)
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        if git diff --quiet CLAUDE.md; then
+          echo "No changes to commit"
+        else
+          git add CLAUDE.md
+          git commit -m "Update Container Apps deployment info for ${{ github.event.inputs.environment }} environment [skip ci]"
+          git push
+        fi

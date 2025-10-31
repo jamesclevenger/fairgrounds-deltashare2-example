@@ -1,0 +1,74 @@
+properties:
+  configuration:
+    ingress:
+      external: true
+      targetPort: 8080
+      allowInsecure: false
+      traffic:
+      - weight: 100
+        latestRevision: true
+    registries:
+    - server: fairgroundsdeltashareacr.azurecr.io
+      username: fairgroundsdeltashareacr
+      passwordSecretRef: registry-password
+    secrets:
+    - name: registry-password
+      value: "<ACR_PASSWORD_PLACEHOLDER>"
+    - name: bearer-token
+      value: "<BEARER_TOKEN_PLACEHOLDER>"
+  template:
+    containers:
+    - image: fairgroundsdeltashareacr.azurecr.io/delta-sharing-server:latest
+      name: delta-sharing-server
+      env:
+      - name: DELTA_SHARING_BEARER_TOKEN
+        secretRef: bearer-token
+      - name: MINIO_ENDPOINT
+        value: "localhost:9000"
+      - name: MINIO_ROOT_USER
+        value: "minioadmin"
+      - name: MINIO_ROOT_PASSWORD
+        value: "minioadmin123"
+      - name: MINIO_BUCKET_NAME
+        value: "delta-sharing-data"
+      resources:
+        cpu: 0.5
+        memory: 1.0Gi
+      probes:
+      - type: liveness
+        httpGet:
+          path: "/health"
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+      - type: readiness
+        httpGet:
+          path: "/health"
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+    - image: fairgroundsdeltashareacr.azurecr.io/minio-simple:latest
+      name: minio
+      env:
+      - name: MINIO_ROOT_USER
+        value: "minioadmin"
+      - name: MINIO_ROOT_PASSWORD
+        value: "minioadmin123"
+      resources:
+        cpu: 0.5
+        memory: 1.0Gi
+      probes:
+      - type: liveness
+        httpGet:
+          path: "/minio/health/live"
+          port: 9000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+      rules:
+      - name: "http-scaler"
+        http:
+          metadata:
+            concurrentRequests: "10"

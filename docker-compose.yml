@@ -27,6 +27,10 @@ services:
       - "${DELTA_SHARING_SERVER_PORT:-8080}:8080"
     environment:
       DELTA_SHARING_BEARER_TOKEN: ${DELTA_SHARING_BEARER_TOKEN:-your-secure-bearer-token-here}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-delta-sharing-data}
     volumes:
       - ./config:/config
       - ./sample_data:/data

@@ -58,5 +58,6 @@ requirements-test.txt
 
 # Claude Code configuration
 CLAUDE.md
+.claude/
 
 credential_file.SHARE
