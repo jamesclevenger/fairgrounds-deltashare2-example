@@ -455,6 +455,10 @@ def generate_presigned_url(object_name, expiry_hours=1):
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/query', methods=['POST'])
 def query_table(share_name, schema_name, table_name):
     """Query table data - returns NDJSON format as per Delta Sharing protocol"""
+    print(f"=== QUERY REQUEST for {table_name} ===")
+    print(f"Request body: {request.get_data()}")
+    print(f"Headers: {dict(request.headers)}")
+    
     if share_name != "fairgrounds_share" or schema_name != "sample_data":
         return jsonify({"error": "Table not found"}), 404
     
@@ -544,6 +548,10 @@ def query_table(share_name, schema_name, table_name):
     
     # Combine lines with newlines for NDJSON format (3 lines only)
     ndjson_response = f"{protocol_line}\n{metadata_line}\n{file_line}\n"
+    
+    print(f"=== RETURNING NDJSON RESPONSE ===")
+    print(f"Response body: {ndjson_response}")
+    print(f"Headers: Delta-Table-Version: 1")
     
     # Return with proper headers including Delta-Table-Version
     return Response(
