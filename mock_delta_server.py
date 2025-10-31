@@ -96,6 +96,40 @@ def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy"})
 
+@app.route('/debug/responses')
+def debug_responses():
+    """Test all endpoint responses to ensure they're properly formatted"""
+    endpoints = {}
+    
+    # Test shares endpoint
+    try:
+        from unittest.mock import Mock
+        with app.test_request_context('/shares', headers={'Authorization': f'Bearer {BEARER_TOKEN}'}):
+            response = list_shares()
+            endpoints['/shares'] = {
+                "status": "success",
+                "data": response.get_json() if hasattr(response, 'get_json') else str(response)
+            }
+    except Exception as e:
+        endpoints['/shares'] = {"status": "error", "error": str(e)}
+    
+    # Test specific share endpoint
+    try:
+        with app.test_request_context('/shares/fairgrounds_share', headers={'Authorization': f'Bearer {BEARER_TOKEN}'}):
+            response = get_share('fairgrounds_share')
+            endpoints['/shares/fairgrounds_share'] = {
+                "status": "success", 
+                "data": response.get_json() if hasattr(response, 'get_json') else str(response)
+            }
+    except Exception as e:
+        endpoints['/shares/fairgrounds_share'] = {"status": "error", "error": str(e)}
+    
+    return jsonify({
+        "test_results": endpoints,
+        "bearer_token": BEARER_TOKEN[:10] + "...",
+        "expected_share_name": "fairgrounds_share"
+    })
+
 @app.route('/debug/minio')
 def debug_minio():
     """Debug MinIO connection and bucket contents"""
@@ -163,9 +197,12 @@ def get_share(share_name):
         print(f"Share not found: '{share_name}' != 'fairgrounds_share'")
         return jsonify({"error": "Share not found"}), 404
     
+    # According to Delta Sharing protocol, response should wrap share in "share" field
     response_data = {
-        "name": "fairgrounds_share",
-        "id": "fairgrounds_share"
+        "share": {
+            "name": "fairgrounds_share",
+            "id": "fairgrounds_share"
+        }
     }
     print(f"Returning share data: {response_data}")
     return jsonify(response_data)
