@@ -476,6 +476,26 @@ def generate_presigned_url(object_name, expiry_hours=1):
         traceback.print_exc()
         return None
 
+@app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/version')
+def get_table_version(share_name, schema_name, table_name):
+    """Get table version - required for Delta Sharing protocol"""
+    print(f"=== TABLE VERSION REQUEST for {table_name} ===")
+    print(f"Headers: {dict(request.headers)}")
+    
+    if share_name != "fairgrounds_share" or schema_name != "sample_data":
+        return jsonify({"error": "Table not found"}), 404
+    
+    if table_name not in ["customers", "orders", "products"]:
+        return jsonify({"error": "Table not found"}), 404
+    
+    response = jsonify({
+        "version": 486
+    })
+    
+    # Add Delta-Table-Version header
+    response.headers['Delta-Table-Version'] = '486'
+    return response
+
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/query', methods=['POST'])
 def query_table(share_name, schema_name, table_name):
     """Query table data - returns NDJSON format as per Delta Sharing protocol"""
