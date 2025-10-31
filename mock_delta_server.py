@@ -358,10 +358,18 @@ def get_table_metadata(share_name, schema_name, table_name):
             },
             "schemaString": json.dumps(schema),
             "partitionColumns": [],
-            "configuration": {},
+            "configuration": {
+                "delta.enableChangeDataFeed": "true",
+                "delta.enableDeletionVectors": "false", 
+                "delta.feature.changeDataFeed": "supported",
+                "delta.lastCommitTimestamp": str(int(datetime.now().timestamp() * 1000)),
+                "delta.lastUpdateVersion": "1",
+                "delta.minReaderVersion": "1",
+                "delta.minWriterVersion": "7",
+                "parquet.compression.codec": "zstd"
+            },
             "createdTime": int(datetime.now().timestamp() * 1000)
-        },
-        "version": 1
+        }
     })
 
 def initialize_minio():
