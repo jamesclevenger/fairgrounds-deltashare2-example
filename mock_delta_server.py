@@ -356,7 +356,7 @@ def get_table_metadata(share_name, schema_name, table_name):
     
     schema = table_schemas.get(table_name, table_schemas["customers"])
     
-    return jsonify({
+    response = jsonify({
         "protocol": {
             "minReaderVersion": 1
         },
@@ -373,15 +373,19 @@ def get_table_metadata(share_name, schema_name, table_name):
                 "delta.enableDeletionVectors": "false", 
                 "delta.feature.changeDataFeed": "supported",
                 "delta.lastCommitTimestamp": str(int(datetime.now().timestamp() * 1000)),
-                "delta.lastUpdateVersion": "1",
+                "delta.lastUpdateVersion": "486",
                 "delta.minReaderVersion": "1",
                 "delta.minWriterVersion": "7",
                 "parquet.compression.codec": "zstd"
             },
             "createdTime": int(datetime.now().timestamp() * 1000)
         },
-        "version": 1
+        "version": 486
     })
+    
+    # Add Delta-Table-Version header to metadata response as well
+    response.headers['Delta-Table-Version'] = '486'
+    return response
 
 def initialize_minio():
     """Initialize MinIO bucket and upload sample data"""
