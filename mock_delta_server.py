@@ -293,24 +293,50 @@ def get_table_metadata(share_name, schema_name, table_name):
     if table_name not in ["customers", "orders", "products"]:
         return jsonify({"error": "Table not found"}), 404
     
-    # Mock metadata response
+    # Enhanced metadata response with more realistic schema
+    table_schemas = {
+        "customers": {
+            "type": "struct",
+            "fields": [
+                {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "customer_name", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "email", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "created_at", "type": "timestamp", "nullable": True, "metadata": {}}
+            ]
+        },
+        "orders": {
+            "type": "struct", 
+            "fields": [
+                {"name": "order_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "order_date", "type": "timestamp", "nullable": True, "metadata": {}},
+                {"name": "total_amount", "type": "decimal(10,2)", "nullable": True, "metadata": {}}
+            ]
+        },
+        "products": {
+            "type": "struct",
+            "fields": [
+                {"name": "product_id", "type": "integer", "nullable": False, "metadata": {}},
+                {"name": "product_name", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "price", "type": "decimal(10,2)", "nullable": True, "metadata": {}},
+                {"name": "category", "type": "string", "nullable": True, "metadata": {}}
+            ]
+        }
+    }
+    
+    schema = table_schemas.get(table_name, table_schemas["customers"])
+    
     return jsonify({
         "protocol": {
             "minReaderVersion": 1
         },
         "metaData": {
             "id": f"mock-{table_name}-id",
+            "name": table_name,
             "format": {
                 "provider": "csv"
             },
-            "schemaString": json.dumps({
-                "type": "struct",
-                "fields": [
-                    {"name": "id", "type": "integer", "nullable": True, "metadata": {}},
-                    {"name": "name", "type": "string", "nullable": True, "metadata": {}},
-                    {"name": "data", "type": "string", "nullable": True, "metadata": {}}
-                ]
-            }),
+            "schemaString": json.dumps(schema),
             "partitionColumns": [],
             "configuration": {},
             "createdTime": int(datetime.now().timestamp() * 1000)
