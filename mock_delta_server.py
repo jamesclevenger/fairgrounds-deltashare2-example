@@ -109,13 +109,34 @@ def debug_minio():
 @app.route('/shares')
 def list_shares():
     """List all shares"""
-    return jsonify({
+    # Support pagination parameters (even if not used)
+    max_results = request.args.get('maxResults', type=int)
+    page_token = request.args.get('pageToken')
+    
+    response = {
         "items": [
             {
                 "name": "fairgrounds_share",
                 "id": "fairgrounds_share"
             }
         ]
+    }
+    
+    # Add nextPageToken if pagination is needed (not needed for single share)
+    # if has_more_results:
+    #     response["nextPageToken"] = "next_token_here"
+    
+    return jsonify(response)
+
+@app.route('/shares/<share_name>')
+def get_share(share_name):
+    """Get specific share information"""
+    if share_name != "fairgrounds_share":
+        return jsonify({"error": "Share not found"}), 404
+    
+    return jsonify({
+        "name": "fairgrounds_share",
+        "id": "fairgrounds_share"
     })
 
 @app.route('/shares/<share_name>/schemas')
@@ -123,6 +144,10 @@ def list_schemas(share_name):
     """List schemas in a share"""
     if share_name != "fairgrounds_share":
         return jsonify({"error": "Share not found"}), 404
+    
+    # Support pagination parameters
+    max_results = request.args.get('maxResults', type=int)
+    page_token = request.args.get('pageToken')
     
     return jsonify({
         "items": [
@@ -403,7 +428,35 @@ def proxy_file(object_path):
 
 @app.errorhandler(404)
 def not_found(error):
+    """Enhanced 404 handler with request logging"""
+    print(f"404 Not Found: {request.method} {request.path}")
+    print(f"Query params: {dict(request.args)}")
+    print(f"Headers: {dict(request.headers)}")
     return jsonify({"error": "Not found"}), 404
+
+@app.route('/<path:path>')
+def catch_all(path):
+    """Catch-all route for debugging missing endpoints"""
+    print(f"Unhandled request: {request.method} /{path}")
+    print(f"Query params: {dict(request.args)}")
+    print(f"Headers: {dict(request.headers)}")
+    return jsonify({
+        "error": "Endpoint not implemented",
+        "method": request.method,
+        "path": f"/{path}",
+        "available_endpoints": [
+            "GET /shares",
+            "GET /shares/{share}",
+            "GET /shares/{share}/schemas",
+            "GET /shares/{share}/all-tables",
+            "GET /shares/{share}/schemas/{schema}/tables",
+            "GET /shares/{share}/schemas/{schema}/tables/{table}/metadata",
+            "POST /shares/{share}/schemas/{schema}/tables/{table}/query",
+            "GET /files/{path}",
+            "GET /health",
+            "GET /debug/minio"
+        ]
+    }), 404
 
 @app.errorhandler(500)
 def internal_error(error):
