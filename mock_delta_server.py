@@ -321,7 +321,7 @@ def get_table_metadata(share_name, schema_name, table_name):
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "customer_name", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "email", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "created_at", "type": "timestamp", "nullable": True, "metadata": {}}
+                {"name": "created_at", "type": "string", "nullable": True, "metadata": {}}
             ]
         },
         "orders": {
@@ -329,7 +329,7 @@ def get_table_metadata(share_name, schema_name, table_name):
             "fields": [
                 {"name": "order_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
-                {"name": "order_date", "type": "timestamp", "nullable": True, "metadata": {}},
+                {"name": "order_date", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "total_amount", "type": "decimal(10,2)", "nullable": True, "metadata": {}}
             ]
         },
@@ -477,7 +477,7 @@ def query_table(share_name, schema_name, table_name):
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "customer_name", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "email", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "created_at", "type": "timestamp", "nullable": True, "metadata": {}}
+                {"name": "created_at", "type": "string", "nullable": True, "metadata": {}}
             ]
         },
         "orders": {
@@ -485,7 +485,7 @@ def query_table(share_name, schema_name, table_name):
             "fields": [
                 {"name": "order_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
-                {"name": "order_date", "type": "timestamp", "nullable": True, "metadata": {}},
+                {"name": "order_date", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "total_amount", "type": "decimal(10,2)", "nullable": True, "metadata": {}}
             ]
         },
