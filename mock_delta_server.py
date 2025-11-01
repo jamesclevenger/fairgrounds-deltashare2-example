@@ -518,8 +518,8 @@ def query_table(share_name, schema_name, table_name):
     if external_url.startswith('http://'):
         external_url = external_url.replace('http://', 'https://')
     
-    # Return proxy URL with token parameter instead of direct MinIO URL
-    file_url = f"{external_url}/files/sample_data/{table_name}.parquet?token={BEARER_TOKEN}"
+    # Return proxy URL using standard Bearer token authentication
+    file_url = f"{external_url}/files/sample_data/{table_name}.parquet"
     
     # Get table schema for metadata
     table_schemas = {
@@ -617,8 +617,25 @@ def query_table(share_name, schema_name, table_name):
 @app.route('/files/<path:object_path>')
 def proxy_file(object_path):
     """Proxy file requests to MinIO or return mock Parquet data"""
+    # Authenticate file requests with Bearer token
+    auth_header = request.headers.get('Authorization')
+    token_param = request.args.get('token')
+    
+    # Check for Bearer token in header or token parameter
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split('Bearer ')[1]
+    elif token_param:
+        token = token_param
+    else:
+        print(f"File request authentication failed - no token provided")
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    if token != BEARER_TOKEN:
+        print(f"File request authentication failed - invalid token")
+        return jsonify({"error": "Unauthorized"}), 401
+    
     try:
-        print(f"Proxying file request for: {object_path}")
+        print(f"Proxying authenticated file request for: {object_path}")
         
         # If requesting .parquet file, create mock Parquet data
         if object_path.endswith('.parquet'):
