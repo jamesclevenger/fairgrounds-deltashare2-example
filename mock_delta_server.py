@@ -333,9 +333,12 @@ def get_table_metadata(share_name, schema_name, table_name):
             "type": "struct",
             "fields": [
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
-                {"name": "customer_name", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "name", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "email", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "created_at", "type": "string", "nullable": True, "metadata": {}}
+                {"name": "city", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "state", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "country", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "registration_date", "type": "string", "nullable": True, "metadata": {}}
             ]
         },
         "orders": {
