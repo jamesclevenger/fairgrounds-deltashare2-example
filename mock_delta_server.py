@@ -591,11 +591,11 @@ def query_table(share_name, schema_name, table_name):
     })
     
     # Combine lines with newlines for NDJSON format (3 lines only)
-    ndjson_response = f"{protocol_line}\n{metadata_line}\n{file_line}\n"
+    ndjson_response = f"{protocol_line}\n{metadata_line}\n{file_line}"
     
     print(f"=== RETURNING NDJSON RESPONSE ===")
     print(f"Response body: {ndjson_response}")
-    print(f"Headers: Delta-Table-Version: 1")
+    print(f"Headers: Delta-Table-Version: 486")
     
     # Return with proper headers including Delta-Table-Version
     return Response(
@@ -603,7 +603,7 @@ def query_table(share_name, schema_name, table_name):
         mimetype='application/x-ndjson; charset=utf-8',
         headers={
             'Content-Type': 'application/x-ndjson; charset=utf-8',
-            'Delta-Table-Version': '1'
+            'Delta-Table-Version': '486'
         }
     )
 
