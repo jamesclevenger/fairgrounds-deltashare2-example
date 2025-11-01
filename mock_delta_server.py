@@ -7,12 +7,16 @@ This implements the basic Delta Sharing REST API endpoints.
 from flask import Flask, request, jsonify, Response
 import os
 import json
+import io
 from datetime import datetime, timedelta
 from minio import Minio
 from minio.error import S3Error
 import urllib3
 import requests
 import uuid
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 app = Flask(__name__)
 
@@ -340,7 +344,7 @@ def get_table_metadata(share_name, schema_name, table_name):
                 {"name": "order_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "order_date", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "total_amount", "type": "decimal(10,2)", "nullable": True, "metadata": {}}
+                {"name": "total_amount", "type": "double", "nullable": True, "metadata": {}}
             ]
         },
         "products": {
@@ -348,7 +352,7 @@ def get_table_metadata(share_name, schema_name, table_name):
             "fields": [
                 {"name": "product_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "product_name", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "price", "type": "decimal(10,2)", "nullable": True, "metadata": {}},
+                {"name": "price", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "category", "type": "string", "nullable": True, "metadata": {}}
             ]
         }
@@ -523,9 +527,12 @@ def query_table(share_name, schema_name, table_name):
             "type": "struct",
             "fields": [
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
-                {"name": "customer_name", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "name", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "email", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "created_at", "type": "string", "nullable": True, "metadata": {}}
+                {"name": "city", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "state", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "country", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "registration_date", "type": "string", "nullable": True, "metadata": {}}
             ]
         },
         "orders": {
@@ -534,7 +541,7 @@ def query_table(share_name, schema_name, table_name):
                 {"name": "order_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "customer_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "order_date", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "total_amount", "type": "decimal(10,2)", "nullable": True, "metadata": {}}
+                {"name": "total_amount", "type": "double", "nullable": True, "metadata": {}}
             ]
         },
         "products": {
@@ -542,7 +549,7 @@ def query_table(share_name, schema_name, table_name):
             "fields": [
                 {"name": "product_id", "type": "integer", "nullable": False, "metadata": {}},
                 {"name": "product_name", "type": "string", "nullable": True, "metadata": {}},
-                {"name": "price", "type": "decimal(10,2)", "nullable": True, "metadata": {}},
+                {"name": "price", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "category", "type": "string", "nullable": True, "metadata": {}}
             ]
         }
@@ -670,47 +677,66 @@ def proxy_file(object_path):
         return jsonify({"error": f"Internal error: {str(e)}"}), 500
 
 def create_mock_parquet_response(object_path):
-    """Create a mock Parquet file response"""
+    """Create a real Parquet file response"""
     try:
-        # For now, just return the CSV data with Parquet mimetype
-        # In a real implementation, you'd convert CSV to Parquet format
         table_name = object_path.split('/')[-1].replace('.parquet', '')
         
-        # Simple CSV data that mimics what would be in Parquet
+        # Create actual data as pandas DataFrame
         if table_name == 'customers':
-            csv_data = """customer_id,customer_name,email,created_at
-1,John Doe,john@example.com,2024-01-01 10:00:00
-2,Jane Smith,jane@example.com,2024-01-02 11:00:00
-3,Bob Johnson,bob@example.com,2024-01-03 12:00:00"""
+            data = {
+                'customer_id': [1, 2, 3, 4, 5],
+                'name': ['John Smith', 'Sarah Johnson', 'Mike Brown', 'Emily Davis', 'David Wilson'],
+                'email': ['john.smith@email.com', 'sarah.johnson@email.com', 'mike.brown@email.com', 'emily.davis@email.com', 'david.wilson@email.com'],
+                'city': ['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix'],
+                'state': ['NY', 'CA', 'IL', 'TX', 'AZ'],
+                'country': ['USA', 'USA', 'USA', 'USA', 'USA'],
+                'registration_date': ['2023-01-15', '2023-02-20', '2023-03-10', '2023-04-05', '2023-05-12']
+            }
         elif table_name == 'orders':
-            csv_data = """order_id,customer_id,order_date,total_amount
-101,1,2024-01-01 10:30:00,99.99
-102,2,2024-01-02 11:30:00,149.99
-103,1,2024-01-03 12:30:00,79.99"""
+            data = {
+                'order_id': [101, 102, 103, 104, 105],
+                'customer_id': [1, 2, 1, 3, 2],
+                'order_date': ['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'],
+                'total_amount': [99.99, 149.99, 79.99, 199.99, 89.99]
+            }
         elif table_name == 'products':
-            csv_data = """product_id,product_name,price,category
-1,Widget A,29.99,Electronics
-2,Widget B,39.99,Electronics
-3,Gadget C,19.99,Accessories"""
+            data = {
+                'product_id': [1, 2, 3, 4, 5],
+                'product_name': ['Widget A', 'Widget B', 'Gadget C', 'Tool D', 'Device E'],
+                'price': [29.99, 39.99, 19.99, 49.99, 59.99],
+                'category': ['Electronics', 'Electronics', 'Accessories', 'Tools', 'Electronics']
+            }
         else:
-            csv_data = "id,name,value\n1,Sample,123"
+            data = {'id': [1], 'name': ['Sample'], 'value': [123]}
         
-        print(f"Returning mock Parquet data for {table_name}")
+        # Create DataFrame and convert to Parquet
+        df = pd.DataFrame(data)
         
-        # Return as Parquet mimetype (even though it's CSV data)
-        # In a real implementation, you'd use a library like pyarrow to create actual Parquet
+        # Convert to PyArrow Table
+        table = pa.Table.from_pandas(df)
+        
+        # Write to bytes buffer
+        parquet_buffer = io.BytesIO()
+        pq.write_table(table, parquet_buffer)
+        parquet_data = parquet_buffer.getvalue()
+        
+        print(f"Created real Parquet data for {table_name}: {len(parquet_data)} bytes")
+        
         return Response(
-            csv_data.encode('utf-8'), 
+            parquet_data,
             mimetype='application/octet-stream',
             headers={
                 'Content-Disposition': f'attachment; filename="{object_path.split("/")[-1]}"',
-                'Content-Type': 'application/octet-stream'
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': str(len(parquet_data))
             }
         )
         
     except Exception as e:
-        print(f"Error creating mock Parquet: {e}")
-        return jsonify({"error": f"Failed to create mock data: {str(e)}"}), 500
+        print(f"Error creating Parquet: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to create Parquet data: {str(e)}"}), 500
 
 @app.errorhandler(404)
 def not_found(error):

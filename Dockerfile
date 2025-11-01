@@ -10,8 +10,8 @@ WORKDIR /app
 COPY mock_delta_server.py .
 COPY sample_data/*.csv /data/
 
-# Install Flask, MinIO client, and requests
-RUN pip install flask minio requests
+# Install Flask, MinIO client, requests, and Parquet support
+RUN pip install flask minio requests pandas pyarrow
 
 # Create directories for config and data
 RUN mkdir -p /config /data
