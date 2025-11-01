@@ -26,10 +26,15 @@ BEARER_TOKEN = os.getenv('DELTA_SHARING_BEARER_TOKEN', 'your-secure-bearer-token
 # Fixed UUIDs for consistent responses
 SHARE_ID = "550e8400-e29b-41d4-a716-446655440000"
 SCHEMA_ID = "550e8400-e29b-41d4-a716-446655440001"
+SCHEMA_IDS = {
+    "fairgrounds_share": "550e8400-e29b-41d4-a716-446655440001",
+    "oregon_share": "550e8400-e29b-41d4-a716-446655440011"
+}
 TABLE_IDS = {
     "customers": "550e8400-e29b-41d4-a716-446655440002",
     "orders": "550e8400-e29b-41d4-a716-446655440003", 
-    "products": "550e8400-e29b-41d4-a716-446655440004"
+    "products": "550e8400-e29b-41d4-a716-446655440004",
+    "boston-housing": "a76e5192-13de-406c-8af0-eb8d7803e80a"  # Use real ID from public endpoint
 }
 
 # MinIO configuration
@@ -205,6 +210,10 @@ def list_shares():
             {
                 "name": "fairgrounds_share",
                 "id": SHARE_ID
+            },
+            {
+                "name": "oregon_share",
+                "id": "550e8400-e29b-41d4-a716-446655440010"
             }
         ]
     }
@@ -220,24 +229,37 @@ def get_share(share_name):
     """Get specific share information"""
     print(f"Getting share info for: '{share_name}'")
     
-    if share_name != "fairgrounds_share":
-        print(f"Share not found: '{share_name}' != 'fairgrounds_share'")
+    if share_name == "fairgrounds_share":
+        response_data = {
+            "share": {
+                "name": "fairgrounds_share",
+                "id": SHARE_ID
+            }
+        }
+    elif share_name == "oregon_share":
+        response_data = {
+            "share": {
+                "name": "oregon_share",
+                "id": "550e8400-e29b-41d4-a716-446655440010"
+            }
+        }
+    else:
+        print(f"Share not found: '{share_name}'")
         return jsonify({"error": "Share not found"}), 404
     
-    # According to Delta Sharing protocol, response should wrap share in "share" field
-    response_data = {
-        "share": {
-            "name": "fairgrounds_share",
-            "id": SHARE_ID
-        }
-    }
     print(f"Returning share data: {response_data}")
     return jsonify(response_data)
 
 @app.route('/shares/<share_name>/schemas')
 def list_schemas(share_name):
     """List schemas in a share"""
-    if share_name != "fairgrounds_share":
+    if share_name == "fairgrounds_share":
+        schema_name = "sample_data"
+        share_id = SHARE_ID
+    elif share_name == "oregon_share":
+        schema_name = "default"
+        share_id = "550e8400-e29b-41d4-a716-446655440010"
+    else:
         return jsonify({"error": "Share not found"}), 404
     
     # Support pagination parameters
@@ -247,9 +269,9 @@ def list_schemas(share_name):
     return jsonify({
         "items": [
             {
-                "name": "sample_data",
+                "name": schema_name,
                 "share": share_name,
-                "id": SCHEMA_ID
+                "id": SCHEMA_IDS.get(share_name, SCHEMA_ID)
             }
         ]
     })
@@ -321,10 +343,15 @@ def list_tables(share_name, schema_name):
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/metadata')
 def get_table_metadata(share_name, schema_name, table_name):
     """Get table metadata"""
-    if share_name != "fairgrounds_share" or schema_name != "sample_data":
-        return jsonify({"error": "Table not found"}), 404
-    
-    if table_name not in ["customers", "orders", "products"]:
+    # Check for fairgrounds_share
+    if share_name == "fairgrounds_share" and schema_name == "sample_data":
+        if table_name not in ["customers", "orders", "products"]:
+            return jsonify({"error": "Table not found"}), 404
+    # Check for oregon_share  
+    elif share_name == "oregon_share" and schema_name == "default":
+        if table_name != "boston-housing":
+            return jsonify({"error": "Table not found"}), 404
+    else:
         return jsonify({"error": "Table not found"}), 404
     
     # Enhanced metadata response with more realistic schema
@@ -357,6 +384,26 @@ def get_table_metadata(share_name, schema_name, table_name):
                 {"name": "product_name", "type": "string", "nullable": True, "metadata": {}},
                 {"name": "price", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "category", "type": "string", "nullable": True, "metadata": {}}
+            ]
+        },
+        "boston-housing": {
+            "type": "struct",
+            "fields": [
+                {"name": "ID", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "crim", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "zn", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "indus", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "chas", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "nox", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "rm", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "age", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "dis", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "rad", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "tax", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "ptratio", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "black", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "lstat", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "medv", "type": "double", "nullable": True, "metadata": {}}
             ]
         }
     }
@@ -513,19 +560,51 @@ def query_table(share_name, schema_name, table_name):
     print(f"Request body: {request.get_data()}")
     print(f"Headers: {dict(request.headers)}")
     
-    if share_name != "fairgrounds_share" or schema_name != "sample_data":
+    # Check for fairgrounds_share
+    if share_name == "fairgrounds_share" and schema_name == "sample_data":
+        if table_name not in ["customers", "orders", "products"]:
+            return jsonify({"error": "Table not found"}), 404
+        use_aws_s3_url = False
+    # Check for oregon_share  
+    elif share_name == "oregon_share" and schema_name == "default":
+        if table_name != "boston-housing":
+            return jsonify({"error": "Table not found"}), 404
+        use_aws_s3_url = True
+    else:
         return jsonify({"error": "Table not found"}), 404
     
-    if table_name not in ["customers", "orders", "products"]:
-        return jsonify({"error": "Table not found"}), 404
-    
-    # Get the external URL for this container app - ensure HTTPS
-    external_url = request.host_url.rstrip('/')
-    if external_url.startswith('http://'):
-        external_url = external_url.replace('http://', 'https://')
-    
-    # Return proxy URL using standard Bearer token authentication
-    file_url = f"{external_url}/files/sample_data/{table_name}.parquet"
+    # Generate file URL
+    if use_aws_s3_url:
+        # For oregon_share, fetch real AWS S3 URL with SigV4 from public endpoint
+        import requests
+        try:
+            response = requests.post(
+                "https://sharing.delta.io/delta-sharing/shares/delta_sharing/schemas/default/tables/boston-housing/query",
+                headers={"Authorization": "Bearer faaie590d541265bcab1f2de9813274bf233", "Content-Type": "application/json"},
+                json={"limitHint": 1}
+            )
+            if response.status_code == 200:
+                lines = response.text.strip().split('\n')
+                file_data = json.loads(lines[2])  # Third line contains file info
+                file_url = file_data['file']['url']
+                actual_size = file_data['file']['size']
+                real_stats = file_data['file']['stats']
+                print(f"Using real AWS S3 URL: {file_url[:100]}...")
+            else:
+                raise Exception(f"Failed to fetch AWS URL: {response.status_code}")
+        except Exception as e:
+            print(f"Error fetching AWS URL: {e}")
+            # Fallback to our URL
+            external_url = request.host_url.rstrip('/')
+            if external_url.startswith('http://'):
+                external_url = external_url.replace('http://', 'https://')
+            file_url = f"{external_url}/files/sample_data/{table_name}.parquet"
+    else:
+        # For fairgrounds_share, use our proxy URL
+        external_url = request.host_url.rstrip('/')
+        if external_url.startswith('http://'):
+            external_url = external_url.replace('http://', 'https://')
+        file_url = f"{external_url}/files/sample_data/{table_name}.parquet"
     
     # Get table schema for metadata
     table_schemas = {
@@ -558,6 +637,26 @@ def query_table(share_name, schema_name, table_name):
                 {"name": "price", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "category", "type": "string", "nullable": True, "metadata": {}}
             ]
+        },
+        "boston-housing": {
+            "type": "struct",
+            "fields": [
+                {"name": "ID", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "crim", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "zn", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "indus", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "chas", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "nox", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "rm", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "age", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "dis", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "rad", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "tax", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "ptratio", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "black", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "lstat", "type": "double", "nullable": True, "metadata": {}},
+                {"name": "medv", "type": "double", "nullable": True, "metadata": {}}
+            ]
         }
     }
     
@@ -586,24 +685,33 @@ def query_table(share_name, schema_name, table_name):
         }
     })
     
-    # Calculate actual file size by creating the Parquet data
-    mock_response = create_mock_parquet_response(f"sample_data/{table_name}.parquet")
-    actual_size = len(mock_response.get_data())
+    # Calculate file size and stats
+    if use_aws_s3_url and 'actual_size' in locals():
+        # Use real size and stats from AWS S3
+        file_size = actual_size
+        file_stats = real_stats
+        file_id = "a631e8c0413b821312ee7ace0308aec0"  # Use real ID from public endpoint
+    else:
+        # Calculate size for our mock data
+        mock_response = create_mock_parquet_response(f"sample_data/{table_name}.parquet")
+        file_size = len(mock_response.get_data())
+        file_stats = json.dumps({
+            "numRecords": 5,
+            "minValues": {},
+            "maxValues": {},
+            "nullCount": {}
+        })
+        file_id = str(uuid.uuid4())
     
     # Line 3: File object
     file_line = json.dumps({
         "file": {
             "url": file_url,
-            "id": str(uuid.uuid4()),
+            "id": file_id,
             "partitionValues": {},
-            "size": actual_size,
+            "size": file_size,
             "timestamp": int(datetime.now().timestamp() * 1000),
-            "stats": json.dumps({
-                "numRecords": 5,
-                "minValues": {},
-                "maxValues": {},
-                "nullCount": {}
-            })
+            "stats": file_stats
         }
     })
     
