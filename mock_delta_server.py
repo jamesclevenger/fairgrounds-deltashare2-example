@@ -586,16 +586,20 @@ def query_table(share_name, schema_name, table_name):
         }
     })
     
+    # Calculate actual file size by creating the Parquet data
+    mock_response = create_mock_parquet_response(f"sample_data/{table_name}.parquet")
+    actual_size = len(mock_response.get_data())
+    
     # Line 3: File object
     file_line = json.dumps({
         "file": {
             "url": file_url,
             "id": str(uuid.uuid4()),
             "partitionValues": {},
-            "size": 1024,
+            "size": actual_size,
             "timestamp": int(datetime.now().timestamp() * 1000),
             "stats": json.dumps({
-                "numRecords": 10,
+                "numRecords": 5,
                 "minValues": {},
                 "maxValues": {},
                 "nullCount": {}
