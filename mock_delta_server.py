@@ -279,11 +279,8 @@ def list_schemas(share_name):
 @app.route('/shares/<share_name>/all-tables')
 def list_all_tables(share_name):
     """List all tables in a share (Databricks specific endpoint)"""
-    if share_name != "fairgrounds_share":
-        return jsonify({"error": "Share not found"}), 404
-    
-    return jsonify({
-        "items": [
+    if share_name == "fairgrounds_share":
+        tables = [
             {
                 "name": "customers",
                 "schema": "sample_data",
@@ -300,44 +297,71 @@ def list_all_tables(share_name):
             },
             {
                 "name": "products",
-                "schema": "sample_data",
+                "schema": "sample_data", 
                 "share": share_name,
                 "shareId": SHARE_ID,
                 "id": TABLE_IDS["products"]
             }
         ]
+    elif share_name == "oregon_share":
+        tables = [
+            {
+                "name": "boston-housing",
+                "schema": "default",
+                "share": share_name,
+                "shareId": "550e8400-e29b-41d4-a716-446655440010",
+                "id": TABLE_IDS["boston-housing"]
+            }
+        ]
+    else:
+        return jsonify({"error": "Share not found"}), 404
+    
+    return jsonify({
+        "items": tables
     })
 
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables')
 def list_tables(share_name, schema_name):
     """List tables in a schema"""
-    if share_name != "fairgrounds_share" or schema_name != "sample_data":
-        return jsonify({"error": "Schema not found"}), 404
-    
-    return jsonify({
-        "items": [
+    if share_name == "fairgrounds_share" and schema_name == "sample_data":
+        tables = [
             {
                 "name": "customers",
-                "schema": schema_name,
+                "schema": "sample_data",
                 "share": share_name,
                 "shareId": SHARE_ID,
                 "id": TABLE_IDS["customers"]
             },
             {
-                "name": "orders", 
-                "schema": schema_name,
+                "name": "orders",
+                "schema": "sample_data", 
                 "share": share_name,
                 "shareId": SHARE_ID,
                 "id": TABLE_IDS["orders"]
             },
             {
                 "name": "products",
-                "schema": schema_name,
-                "share": share_name,
+                "schema": "sample_data",
+                "share": share_name, 
                 "shareId": SHARE_ID,
                 "id": TABLE_IDS["products"]
             }
         ]
+    elif share_name == "oregon_share" and schema_name == "default":
+        tables = [
+            {
+                "name": "boston-housing",
+                "schema": "default",
+                "share": share_name,
+                "shareId": "550e8400-e29b-41d4-a716-446655440010",
+                "id": TABLE_IDS["boston-housing"]
+            }
+        ]
+    else:
+        return jsonify({"error": "Schema not found"}), 404
+    
+    return jsonify({
+        "items": tables
     })
 
 @app.route('/shares/<share_name>/schemas/<schema_name>/tables/<table_name>/metadata')
@@ -539,10 +563,15 @@ def get_table_version(share_name, schema_name, table_name):
     print(f"=== TABLE VERSION REQUEST for {table_name} ===")
     print(f"Headers: {dict(request.headers)}")
     
-    if share_name != "fairgrounds_share" or schema_name != "sample_data":
-        return jsonify({"error": "Table not found"}), 404
-    
-    if table_name not in ["customers", "orders", "products"]:
+    # Check for fairgrounds_share
+    if share_name == "fairgrounds_share" and schema_name == "sample_data":
+        if table_name not in ["customers", "orders", "products"]:
+            return jsonify({"error": "Table not found"}), 404
+    # Check for oregon_share  
+    elif share_name == "oregon_share" and schema_name == "default":
+        if table_name != "boston-housing":
+            return jsonify({"error": "Table not found"}), 404
+    else:
         return jsonify({"error": "Table not found"}), 404
     
     response = jsonify({
