@@ -360,36 +360,39 @@ def get_table_metadata(share_name, schema_name, table_name):
     
     schema = table_schemas.get(table_name, table_schemas["customers"])
     
-    response = jsonify({
+    # Build NDJSON response as per working public Delta Sharing servers
+    # Line 1: Protocol object
+    protocol_line = json.dumps({
         "protocol": {
             "minReaderVersion": 1
-        },
+        }
+    })
+    
+    # Line 2: Metadata object (without name and version fields to match working format)
+    metadata_line = json.dumps({
         "metaData": {
             "id": TABLE_IDS.get(table_name, str(uuid.uuid4())),
-            "name": table_name,
             "format": {
                 "provider": "parquet"
             },
             "schemaString": json.dumps(schema),
-            "partitionColumns": [],
-            "configuration": {
-                "delta.enableChangeDataFeed": "true",
-                "delta.enableDeletionVectors": "false", 
-                "delta.feature.changeDataFeed": "supported",
-                "delta.lastCommitTimestamp": str(int(datetime.now().timestamp() * 1000)),
-                "delta.lastUpdateVersion": "486",
-                "delta.minReaderVersion": "1",
-                "delta.minWriterVersion": "7",
-                "parquet.compression.codec": "zstd"
-            },
-            "createdTime": int(datetime.now().timestamp() * 1000)
-        },
-        "version": 486
+            "configuration": {},
+            "partitionColumns": []
+        }
     })
     
-    # Add Delta-Table-Version header to metadata response as well
-    response.headers['Delta-Table-Version'] = '486'
-    return response
+    # Combine lines with newlines for NDJSON format
+    ndjson_response = f"{protocol_line}\n{metadata_line}"
+    
+    # Return with proper headers including Delta-Table-Version
+    return Response(
+        ndjson_response,
+        mimetype='application/x-ndjson; charset=utf-8',
+        headers={
+            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'Delta-Table-Version': '486'
+        }
+    )
 
 def initialize_minio():
     """Initialize MinIO bucket and upload sample data"""
