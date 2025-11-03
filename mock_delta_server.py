@@ -17,6 +17,10 @@ import uuid
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import base64
+import hmac
+import hashlib
+from urllib.parse import quote
 
 app = Flask(__name__)
 
@@ -28,13 +32,15 @@ SHARE_ID = "550e8400-e29b-41d4-a716-446655440000"
 SCHEMA_ID = "550e8400-e29b-41d4-a716-446655440001"
 SCHEMA_IDS = {
     "fairgrounds_share": "550e8400-e29b-41d4-a716-446655440001",
-    "oregon_share": "550e8400-e29b-41d4-a716-446655440011"
+    "oregon_share": "550e8400-e29b-41d4-a716-446655440011",
+    "from_azure": "550e8400-e29b-41d4-a716-446655440021"
 }
 TABLE_IDS = {
     "customers": "550e8400-e29b-41d4-a716-446655440002",
     "orders": "550e8400-e29b-41d4-a716-446655440003", 
     "products": "550e8400-e29b-41d4-a716-446655440004",
-    "boston-housing": "a76e5192-13de-406c-8af0-eb8d7803e80a"  # Use real ID from public endpoint
+    "boston-housing": "a76e5192-13de-406c-8af0-eb8d7803e80a",  # Use real ID from public endpoint
+    "COVID_19_NYT": "7245fd1d-8a6d-4988-af72-92a95b646511"  # Use real ID from public endpoint
 }
 
 # MinIO configuration
@@ -42,6 +48,11 @@ MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'fairgrounds-deltashare-development
 MINIO_ACCESS_KEY = os.getenv('MINIO_ROOT_USER', 'minioadmin')
 MINIO_SECRET_KEY = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin123')
 MINIO_BUCKET = os.getenv('MINIO_BUCKET_NAME', 'delta-sharing-data')
+
+# Azure Storage configuration
+AZURE_STORAGE_ACCOUNT = os.getenv('AZURE_STORAGE_ACCOUNT_NAME', 'fgdeltashareproduction')
+AZURE_STORAGE_KEY = os.getenv('AZURE_STORAGE_KEY', '')
+AZURE_STORAGE_CONTAINER = os.getenv('AZURE_STORAGE_CONTAINER', 'delta-sharing-data')
 
 # Initialize MinIO client
 def get_minio_client():
@@ -75,6 +86,67 @@ def verify_auth():
     except IndexError:
         print("Malformed Authorization header")
         return False
+
+def generate_azure_sas_url(account_name, account_key, container_name, blob_name, expiry_hours=1):
+    """Generate Azure Storage SAS URL"""
+    from datetime import datetime, timedelta, timezone
+    
+    # Set expiry time
+    expiry_time = datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
+    expiry_str = expiry_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+    
+    # Build canonical resource
+    canonical_resource = f"/blob/{account_name}/{container_name}/{blob_name}"
+    
+    # SAS parameters
+    sas_params = {
+        'sv': '2020-08-04',  # Storage service version
+        'sr': 'b',  # Resource type (blob)
+        'sp': 'r',  # Permissions (read)
+        'se': expiry_str,  # Expiry time
+        'st': '',  # Start time (optional)
+        'spr': 'https',  # Protocol (HTTPS only)
+        'sig': ''  # Signature (will be calculated)
+    }
+    
+    # Build string to sign
+    string_to_sign = '\n'.join([
+        sas_params['sp'],  # permissions
+        sas_params['st'],  # start
+        sas_params['se'],  # expiry
+        canonical_resource,  # canonical resource
+        '',  # identifier
+        '',  # IP
+        sas_params['spr'],  # protocol
+        sas_params['sv'],  # version
+        '',  # resource
+        '',  # snapshot time
+        '',  # encryption scope
+        '',  # cache control
+        '',  # content disposition
+        '',  # content encoding
+        '',  # content language
+        ''   # content type
+    ])
+    
+    # Calculate signature
+    signature = base64.b64encode(
+        hmac.new(
+            base64.b64decode(account_key),
+            string_to_sign.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+    ).decode('utf-8')
+    
+    sas_params['sig'] = signature
+    
+    # Build SAS query string
+    sas_query = '&'.join([f"{k}={quote(str(v), safe='')}" for k, v in sas_params.items()])
+    
+    # Build final URL
+    blob_url = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_query}"
+    
+    return blob_url
 
 @app.before_request
 def check_auth():
@@ -214,6 +286,10 @@ def list_shares():
             {
                 "name": "oregon_share",
                 "id": "550e8400-e29b-41d4-a716-446655440010"
+            },
+            {
+                "name": "from_azure",
+                "id": "550e8400-e29b-41d4-a716-446655440020"
             }
         ]
     }
@@ -243,6 +319,13 @@ def get_share(share_name):
                 "id": "550e8400-e29b-41d4-a716-446655440010"
             }
         }
+    elif share_name == "from_azure":
+        response_data = {
+            "share": {
+                "name": "from_azure",
+                "id": "550e8400-e29b-41d4-a716-446655440020"
+            }
+        }
     else:
         print(f"Share not found: '{share_name}'")
         return jsonify({"error": "Share not found"}), 404
@@ -259,6 +342,9 @@ def list_schemas(share_name):
     elif share_name == "oregon_share":
         schema_name = "default"
         share_id = "550e8400-e29b-41d4-a716-446655440010"
+    elif share_name == "from_azure":
+        schema_name = "default"
+        share_id = "550e8400-e29b-41d4-a716-446655440020"
     else:
         return jsonify({"error": "Share not found"}), 404
     
@@ -313,6 +399,16 @@ def list_all_tables(share_name):
                 "id": TABLE_IDS["boston-housing"]
             }
         ]
+    elif share_name == "from_azure":
+        tables = [
+            {
+                "name": "COVID_19_NYT",
+                "schema": "default",
+                "share": share_name,
+                "shareId": "550e8400-e29b-41d4-a716-446655440020",
+                "id": TABLE_IDS["COVID_19_NYT"]
+            }
+        ]
     else:
         return jsonify({"error": "Share not found"}), 404
     
@@ -357,6 +453,16 @@ def list_tables(share_name, schema_name):
                 "id": TABLE_IDS["boston-housing"]
             }
         ]
+    elif share_name == "from_azure" and schema_name == "default":
+        tables = [
+            {
+                "name": "COVID_19_NYT",
+                "schema": "default",
+                "share": share_name,
+                "shareId": "550e8400-e29b-41d4-a716-446655440020",
+                "id": TABLE_IDS["COVID_19_NYT"]
+            }
+        ]
     else:
         return jsonify({"error": "Schema not found"}), 404
     
@@ -374,6 +480,10 @@ def get_table_metadata(share_name, schema_name, table_name):
     # Check for oregon_share  
     elif share_name == "oregon_share" and schema_name == "default":
         if table_name != "boston-housing":
+            return jsonify({"error": "Table not found"}), 404
+    # Check for from_azure share
+    elif share_name == "from_azure" and schema_name == "default":
+        if table_name != "COVID_19_NYT":
             return jsonify({"error": "Table not found"}), 404
     else:
         return jsonify({"error": "Table not found"}), 404
@@ -428,6 +538,17 @@ def get_table_metadata(share_name, schema_name, table_name):
                 {"name": "black", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "lstat", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "medv", "type": "double", "nullable": True, "metadata": {}}
+            ]
+        },
+        "COVID_19_NYT": {
+            "type": "struct",
+            "fields": [
+                {"name": "date", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "county", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "state", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "fips", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "cases", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "deaths", "type": "integer", "nullable": True, "metadata": {}}
             ]
         }
     }
@@ -594,11 +715,19 @@ def query_table(share_name, schema_name, table_name):
         if table_name not in ["customers", "orders", "products"]:
             return jsonify({"error": "Table not found"}), 404
         use_aws_s3_url = False
+        use_azure_storage = False
     # Check for oregon_share  
     elif share_name == "oregon_share" and schema_name == "default":
         if table_name != "boston-housing":
             return jsonify({"error": "Table not found"}), 404
         use_aws_s3_url = True
+        use_azure_storage = False
+    # Check for from_azure share
+    elif share_name == "from_azure" and schema_name == "default":
+        if table_name != "COVID_19_NYT":
+            return jsonify({"error": "Table not found"}), 404
+        use_aws_s3_url = False
+        use_azure_storage = True
     else:
         return jsonify({"error": "Table not found"}), 404
     
@@ -624,6 +753,39 @@ def query_table(share_name, schema_name, table_name):
         except Exception as e:
             print(f"Error fetching AWS URL: {e}")
             # Fallback to our URL
+            external_url = request.host_url.rstrip('/')
+            if external_url.startswith('http://'):
+                external_url = external_url.replace('http://', 'https://')
+            file_url = f"{external_url}/files/sample_data/{table_name}.parquet"
+    elif use_azure_storage:
+        # For from_azure share, generate Azure Storage SAS URLs for each COVID file
+        file_urls = []
+        file_ids = [
+            '7f71d0d3f1dc3f50d349d16ab50f5b97',
+            '4f156da56c80a6c452ba6459967c6e09', 
+            '2b36671095b8649fe2b5fbe5605c7a19',
+            'e292455d03779cd863c24a0a7bc2a5ac',
+            'c8bee1a92e73cb77ecd063204808f116',
+            '9d508e63a83c108cd53c86bb7eeb7021',
+            '0e370b721f3537c0a1df4842098c1ddb',
+            '3e7b6705e56bd379827ea7feed12bf43'
+        ]
+        
+        # We'll process the first file for now
+        file_id = file_ids[0]
+        blob_name = f"covid_19_nyt/{file_id}.parquet"
+        
+        try:
+            file_url = generate_azure_sas_url(
+                AZURE_STORAGE_ACCOUNT,
+                AZURE_STORAGE_KEY,
+                AZURE_STORAGE_CONTAINER,
+                blob_name
+            )
+            print(f"Generated Azure SAS URL: {file_url[:100]}...")
+        except Exception as e:
+            print(f"Error generating Azure SAS URL: {e}")
+            # Fallback to proxy URL
             external_url = request.host_url.rstrip('/')
             if external_url.startswith('http://'):
                 external_url = external_url.replace('http://', 'https://')
@@ -686,6 +848,17 @@ def query_table(share_name, schema_name, table_name):
                 {"name": "lstat", "type": "double", "nullable": True, "metadata": {}},
                 {"name": "medv", "type": "double", "nullable": True, "metadata": {}}
             ]
+        },
+        "COVID_19_NYT": {
+            "type": "struct",
+            "fields": [
+                {"name": "date", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "county", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "state", "type": "string", "nullable": True, "metadata": {}},
+                {"name": "fips", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "cases", "type": "integer", "nullable": True, "metadata": {}},
+                {"name": "deaths", "type": "integer", "nullable": True, "metadata": {}}
+            ]
         }
     }
     
@@ -720,6 +893,11 @@ def query_table(share_name, schema_name, table_name):
         file_size = actual_size
         file_stats = real_stats
         file_id = "a631e8c0413b821312ee7ace0308aec0"  # Use real ID from public endpoint
+    elif use_azure_storage:
+        # Use real COVID data size and stats from Azure Storage
+        file_size = 883342  # Size of first COVID file
+        file_stats = '{"numRecords":147181,"minValues":{"date":"2021-01-10","county":"Abbeville","state":"Alabama","fips":1001,"cases":0,"deaths":0},"maxValues":{"date":"2021-02-25","county":"Ziebach","state":"Wyoming","fips":78030,"cases":1188101,"deaths":29025},"nullCount":{"date":0,"county":0,"state":0,"fips":1250,"cases":0,"deaths":3510}}'
+        file_id = "7f71d0d3f1dc3f50d349d16ab50f5b97"  # ID of first COVID file
     else:
         # Calculate size for our mock data
         mock_response = create_mock_parquet_response(f"sample_data/{table_name}.parquet")
