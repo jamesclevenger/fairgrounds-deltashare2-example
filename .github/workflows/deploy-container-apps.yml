@@ -140,6 +140,12 @@ jobs:
               value: ${{ env.BEARER_TOKEN }}
             - name: azure-storage-key
               value: $STORAGE_KEY
+            - name: cloudflare-r2-account-id
+              value: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+            - name: cloudflare-r2-access-key
+              value: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+            - name: cloudflare-r2-secret-key
+              value: ${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}
           template:
             containers:
             - image: ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
@@ -161,6 +167,14 @@ jobs:
                 secretRef: azure-storage-key
               - name: AZURE_STORAGE_CONTAINER
                 value: "delta-sharing-data"
+              - name: CLOUDFLARE_R2_ACCOUNT_ID
+                secretRef: cloudflare-r2-account-id
+              - name: CLOUDFLARE_R2_ACCESS_KEY
+                secretRef: cloudflare-r2-access-key
+              - name: CLOUDFLARE_R2_SECRET_KEY
+                secretRef: cloudflare-r2-secret-key
+              - name: CLOUDFLARE_R2_BUCKET
+                value: "test-delta-share"
               resources:
                 cpu: 0.5
                 memory: 1.0Gi

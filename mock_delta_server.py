@@ -33,7 +33,8 @@ SCHEMA_ID = "550e8400-e29b-41d4-a716-446655440001"
 SCHEMA_IDS = {
     "fairgrounds_share": "550e8400-e29b-41d4-a716-446655440001",
     "oregon_share": "550e8400-e29b-41d4-a716-446655440011",
-    "from_azure": "550e8400-e29b-41d4-a716-446655440021"
+    "from_azure": "550e8400-e29b-41d4-a716-446655440021",
+    "from_cloudflare": "550e8400-e29b-41d4-a716-446655440031"
 }
 TABLE_IDS = {
     "customers": "550e8400-e29b-41d4-a716-446655440002",
@@ -53,6 +54,13 @@ MINIO_BUCKET = os.getenv('MINIO_BUCKET_NAME', 'delta-sharing-data')
 AZURE_STORAGE_ACCOUNT = os.getenv('AZURE_STORAGE_ACCOUNT_NAME', 'fgdeltashareproduction')
 AZURE_STORAGE_KEY = os.getenv('AZURE_STORAGE_KEY', '')
 AZURE_STORAGE_CONTAINER = os.getenv('AZURE_STORAGE_CONTAINER', 'delta-sharing-data')
+
+# Cloudflare R2 configuration
+CLOUDFLARE_R2_ACCOUNT_ID = os.getenv('CLOUDFLARE_R2_ACCOUNT_ID', '')
+CLOUDFLARE_R2_ACCESS_KEY = os.getenv('CLOUDFLARE_R2_ACCESS_KEY', '')
+CLOUDFLARE_R2_SECRET_KEY = os.getenv('CLOUDFLARE_R2_SECRET_KEY', '')
+CLOUDFLARE_R2_BUCKET = os.getenv('CLOUDFLARE_R2_BUCKET', 'test-delta-share')
+CLOUDFLARE_R2_ENDPOINT = f'https://{CLOUDFLARE_R2_ACCOUNT_ID}.r2.cloudflarestorage.com'
 
 # Initialize MinIO client
 def get_minio_client():
@@ -147,6 +155,82 @@ def generate_azure_sas_url(account_name, account_key, container_name, blob_name,
     blob_url = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_query}"
     
     return blob_url
+
+def generate_cloudflare_r2_presigned_url(account_id, access_key, secret_key, bucket_name, object_key, expiry_hours=1):
+    """Generate Cloudflare R2 pre-signed URL using AWS S3 compatible API"""
+    from datetime import datetime, timedelta, timezone
+    import urllib.parse
+    
+    # R2 endpoint
+    endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+    
+    # Set expiry time
+    expiry_time = datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
+    expiry_timestamp = int(expiry_time.timestamp())
+    
+    # Current timestamp for signature
+    current_time = datetime.now(timezone.utc)
+    timestamp = current_time.strftime('%Y%m%dT%H%M%SZ')
+    date = current_time.strftime('%Y%m%d')
+    
+    # AWS Signature Version 4 components
+    algorithm = 'AWS4-HMAC-SHA256'
+    credential_scope = f"{date}/auto/s3/aws4_request"
+    credential = f"{access_key}/{credential_scope}"
+    
+    # Query parameters
+    params = {
+        'X-Amz-Algorithm': algorithm,
+        'X-Amz-Credential': credential,
+        'X-Amz-Date': timestamp,
+        'X-Amz-Expires': str(expiry_hours * 3600),
+        'X-Amz-SignedHeaders': 'host'
+    }
+    
+    # Create canonical query string
+    canonical_query = '&'.join([f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in sorted(params.items())])
+    
+    # Create canonical request
+    canonical_request = '\n'.join([
+        'GET',  # HTTP method
+        f'/{object_key}',  # Canonical URI
+        canonical_query,  # Canonical query string
+        f'host:{account_id}.r2.cloudflarestorage.com',  # Canonical headers
+        '',  # Blank line
+        'host',  # Signed headers
+        'UNSIGNED-PAYLOAD'  # Payload hash
+    ])
+    
+    # Create string to sign
+    string_to_sign = '\n'.join([
+        algorithm,
+        timestamp,
+        credential_scope,
+        hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
+    ])
+    
+    # Calculate signature
+    def sign(key, msg):
+        return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+    
+    def get_signature_key(key, date_stamp, region_name, service_name):
+        k_date = sign(('AWS4' + key).encode('utf-8'), date_stamp)
+        k_region = sign(k_date, region_name)
+        k_service = sign(k_region, service_name)
+        k_signing = sign(k_service, 'aws4_request')
+        return k_signing
+    
+    signing_key = get_signature_key(secret_key, date, 'auto', 's3')
+    signature = hmac.new(signing_key, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+    
+    # Add signature to params
+    params['X-Amz-Signature'] = signature
+    
+    # Build final URL
+    final_query = '&'.join([f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in sorted(params.items())])
+    presigned_url = f"{endpoint}/{object_key}?{final_query}"
+    
+    return presigned_url
 
 @app.before_request
 def check_auth():
@@ -290,6 +374,10 @@ def list_shares():
             {
                 "name": "from_azure",
                 "id": "550e8400-e29b-41d4-a716-446655440020"
+            },
+            {
+                "name": "from_cloudflare",
+                "id": "550e8400-e29b-41d4-a716-446655440030"
             }
         ]
     }
@@ -326,6 +414,13 @@ def get_share(share_name):
                 "id": "550e8400-e29b-41d4-a716-446655440020"
             }
         }
+    elif share_name == "from_cloudflare":
+        response_data = {
+            "share": {
+                "name": "from_cloudflare",
+                "id": "550e8400-e29b-41d4-a716-446655440030"
+            }
+        }
     else:
         print(f"Share not found: '{share_name}'")
         return jsonify({"error": "Share not found"}), 404
@@ -345,6 +440,9 @@ def list_schemas(share_name):
     elif share_name == "from_azure":
         schema_name = "default"
         share_id = "550e8400-e29b-41d4-a716-446655440020"
+    elif share_name == "from_cloudflare":
+        schema_name = "default"
+        share_id = "550e8400-e29b-41d4-a716-446655440030"
     else:
         return jsonify({"error": "Share not found"}), 404
     
@@ -409,6 +507,16 @@ def list_all_tables(share_name):
                 "id": TABLE_IDS["COVID_19_NYT"]
             }
         ]
+    elif share_name == "from_cloudflare":
+        tables = [
+            {
+                "name": "COVID_19_NYT",
+                "schema": "default",
+                "share": share_name,
+                "shareId": "550e8400-e29b-41d4-a716-446655440030",
+                "id": TABLE_IDS["COVID_19_NYT"]
+            }
+        ]
     else:
         return jsonify({"error": "Share not found"}), 404
     
@@ -463,6 +571,16 @@ def list_tables(share_name, schema_name):
                 "id": TABLE_IDS["COVID_19_NYT"]
             }
         ]
+    elif share_name == "from_cloudflare" and schema_name == "default":
+        tables = [
+            {
+                "name": "COVID_19_NYT",
+                "schema": "default",
+                "share": share_name,
+                "shareId": "550e8400-e29b-41d4-a716-446655440030",
+                "id": TABLE_IDS["COVID_19_NYT"]
+            }
+        ]
     else:
         return jsonify({"error": "Schema not found"}), 404
     
@@ -483,6 +601,10 @@ def get_table_metadata(share_name, schema_name, table_name):
             return jsonify({"error": "Table not found"}), 404
     # Check for from_azure share
     elif share_name == "from_azure" and schema_name == "default":
+        if table_name != "COVID_19_NYT":
+            return jsonify({"error": "Table not found"}), 404
+    # Check for from_cloudflare share
+    elif share_name == "from_cloudflare" and schema_name == "default":
         if table_name != "COVID_19_NYT":
             return jsonify({"error": "Table not found"}), 404
     else:
@@ -716,18 +838,28 @@ def query_table(share_name, schema_name, table_name):
             return jsonify({"error": "Table not found"}), 404
         use_aws_s3_url = False
         use_azure_storage = False
+        use_cloudflare_r2 = False
     # Check for oregon_share  
     elif share_name == "oregon_share" and schema_name == "default":
         if table_name != "boston-housing":
             return jsonify({"error": "Table not found"}), 404
         use_aws_s3_url = True
         use_azure_storage = False
+        use_cloudflare_r2 = False
     # Check for from_azure share
     elif share_name == "from_azure" and schema_name == "default":
         if table_name != "COVID_19_NYT":
             return jsonify({"error": "Table not found"}), 404
         use_aws_s3_url = False
         use_azure_storage = True
+        use_cloudflare_r2 = False
+    # Check for from_cloudflare share
+    elif share_name == "from_cloudflare" and schema_name == "default":
+        if table_name != "COVID_19_NYT":
+            return jsonify({"error": "Table not found"}), 404
+        use_aws_s3_url = False
+        use_azure_storage = False
+        use_cloudflare_r2 = True
     else:
         return jsonify({"error": "Table not found"}), 404
     
@@ -785,6 +917,39 @@ def query_table(share_name, schema_name, table_name):
             print(f"Generated Azure SAS URL: {file_url[:100]}...")
         except Exception as e:
             print(f"Error generating Azure SAS URL: {e}")
+            # Fallback to proxy URL
+            external_url = request.host_url.rstrip('/')
+            if external_url.startswith('http://'):
+                external_url = external_url.replace('http://', 'https://')
+            file_url = f"{external_url}/files/sample_data/{table_name}.parquet"
+    elif use_cloudflare_r2:
+        # For from_cloudflare share, generate R2 pre-signed URLs for COVID files
+        file_ids = [
+            '7f71d0d3f1dc3f50d349d16ab50f5b97',
+            '4f156da56c80a6c452ba6459967c6e09', 
+            '2b36671095b8649fe2b5fbe5605c7a19',
+            'e292455d03779cd863c24a0a7bc2a5ac',
+            'c8bee1a92e73cb77ecd063204808f116',
+            '9d508e63a83c108cd53c86bb7eeb7021',
+            '0e370b721f3537c0a1df4842098c1ddb',
+            '3e7b6705e56bd379827ea7feed12bf43'
+        ]
+        
+        # We'll process the first file for now
+        file_id = file_ids[0]
+        object_key = f"covid_data/{file_id}.parquet"
+        
+        try:
+            file_url = generate_cloudflare_r2_presigned_url(
+                CLOUDFLARE_R2_ACCOUNT_ID,
+                CLOUDFLARE_R2_ACCESS_KEY,
+                CLOUDFLARE_R2_SECRET_KEY,
+                CLOUDFLARE_R2_BUCKET,
+                object_key
+            )
+            print(f"Generated Cloudflare R2 pre-signed URL: {file_url[:100]}...")
+        except Exception as e:
+            print(f"Error generating Cloudflare R2 URL: {e}")
             # Fallback to proxy URL
             external_url = request.host_url.rstrip('/')
             if external_url.startswith('http://'):
@@ -896,6 +1061,11 @@ def query_table(share_name, schema_name, table_name):
     elif use_azure_storage:
         # Use real COVID data size and stats from Azure Storage
         file_size = 883342  # Size of first COVID file
+        file_stats = '{"numRecords":147181,"minValues":{"date":"2021-01-10","county":"Abbeville","state":"Alabama","fips":1001,"cases":0,"deaths":0},"maxValues":{"date":"2021-02-25","county":"Ziebach","state":"Wyoming","fips":78030,"cases":1188101,"deaths":29025},"nullCount":{"date":0,"county":0,"state":0,"fips":1250,"cases":0,"deaths":3510}}'
+        file_id = "7f71d0d3f1dc3f50d349d16ab50f5b97"  # ID of first COVID file
+    elif use_cloudflare_r2:
+        # Use real COVID data size and stats from Cloudflare R2
+        file_size = 883342  # Size of first COVID file (same data as Azure)
         file_stats = '{"numRecords":147181,"minValues":{"date":"2021-01-10","county":"Abbeville","state":"Alabama","fips":1001,"cases":0,"deaths":0},"maxValues":{"date":"2021-02-25","county":"Ziebach","state":"Wyoming","fips":78030,"cases":1188101,"deaths":29025},"nullCount":{"date":0,"county":0,"state":0,"fips":1250,"cases":0,"deaths":3510}}'
         file_id = "7f71d0d3f1dc3f50d349d16ab50f5b97"  # ID of first COVID file
     else:
