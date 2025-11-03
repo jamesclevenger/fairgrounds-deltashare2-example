@@ -87,6 +87,35 @@ jobs:
           --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
           --location ${{ env.AZURE_LOCATION }}
 
+    - name: Create Azure Storage Account (ADLS Gen2) for from_azure share
+      run: |
+        STORAGE_ACCOUNT_NAME="fgdeltashare${{ github.event.inputs.environment }}"
+        
+        # Create storage account with hierarchical namespace (ADLS Gen2)
+        az storage account create \
+          --name $STORAGE_ACCOUNT_NAME \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --sku Standard_LRS \
+          --kind StorageV2 \
+          --enable-hierarchical-namespace true \
+          --access-tier Hot
+        
+        # Create container for Delta Sharing data
+        STORAGE_KEY=$(az storage account keys list \
+          --account-name $STORAGE_ACCOUNT_NAME \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "[0].value" -o tsv)
+        
+        az storage container create \
+          --name "delta-sharing-data" \
+          --account-name $STORAGE_ACCOUNT_NAME \
+          --account-key $STORAGE_KEY \
+          --public-access off
+        
+        echo "STORAGE_ACCOUNT_NAME=$STORAGE_ACCOUNT_NAME" >> $GITHUB_ENV
+        echo "STORAGE_KEY=$STORAGE_KEY" >> $GITHUB_ENV
+
     - name: Create Container App YAML configuration
       run: |
         # Get ACR credentials
@@ -109,6 +138,8 @@ jobs:
               value: $ACR_PASSWORD
             - name: bearer-token
               value: ${{ env.BEARER_TOKEN }}
+            - name: azure-storage-key
+              value: $STORAGE_KEY
           template:
             containers:
             - image: ${{ env.ACR_NAME }}.azurecr.io/delta-sharing-server:${{ github.sha }}
@@ -123,6 +154,12 @@ jobs:
               - name: MINIO_ROOT_PASSWORD
                 value: "minioadmin123"
               - name: MINIO_BUCKET_NAME
+                value: "delta-sharing-data"
+              - name: AZURE_STORAGE_ACCOUNT_NAME
+                value: $STORAGE_ACCOUNT_NAME
+              - name: AZURE_STORAGE_KEY
+                secretRef: azure-storage-key
+              - name: AZURE_STORAGE_CONTAINER
                 value: "delta-sharing-data"
               resources:
                 cpu: 0.5
@@ -165,9 +202,16 @@ jobs:
         echo "=== Deployment Complete ==="
         echo "Delta Sharing Server (HTTPS): ${{ env.CONTAINER_APP_URL }}"
         echo "Bearer Token: ${{ env.BEARER_TOKEN }}"
+        echo "Azure Storage Account: ${{ env.STORAGE_ACCOUNT_NAME }}"
+        echo "Storage Container: delta-sharing-data"
         echo ""
         echo "Test Container App:"
         echo "curl -H 'Authorization: Bearer ${{ env.BEARER_TOKEN }}' ${{ env.CONTAINER_APP_URL }}/shares"
+        echo ""
+        echo "Available Shares:"
+        echo "- fairgrounds_share (proxy URLs)"
+        echo "- oregon_share (AWS S3 URLs)"  
+        echo "- from_azure (Azure Storage URLs - future)"
         echo ""
         echo "Note: Container Apps provides automatic HTTPS with managed certificates"
 
